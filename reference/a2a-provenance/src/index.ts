@@ -13,7 +13,7 @@
  */
 
 import { webcrypto } from "node:crypto";
-import { emit, verify, canonicalString, type Receipt } from "../../provenance-ts/dist/index.js";
+import { emit, verify, canonicalString, type Receipt } from "@raucle/provenance";
 
 const subtle = webcrypto.subtle;
 

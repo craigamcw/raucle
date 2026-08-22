@@ -105,15 +105,18 @@ public static class Receipt
 
     public static SignedReceipt Emit(JObj payload, Ed25519PrivateKeyParameters privateKey)
     {
-        // Inject the constant iss/typ and sort parents+taint, exactly as
-        // Python's ProvenanceReceipt.payload() does.
-        payload.Set("iss", JVal.Of(Iss));
-        payload.Set("typ", JVal.Of(JwsTyp));
-        SortStringArray(payload, "parents");
-        SortStringArray(payload, "taint");
+        // Clone the payload before injecting iss/typ so the caller's object
+        // is not mutated (parity with the Go and TS implementations).
+        var p = new JObj();
+        foreach (var (k, v) in payload.Members)
+            p.Set(k, v);
+        p.Set("iss", JVal.Of(Iss));
+        p.Set("typ", JVal.Of(JwsTyp));
+        SortStringArray(p, "parents");
+        SortStringArray(p, "taint");
 
-        Validate(payload);
-        var kid = payload.Str("agent_key_id") ?? throw new ProvException("missing agent_key_id");
+        Validate(p);
+        var kid = p.Str("agent_key_id") ?? throw new ProvException("missing agent_key_id");
 
         var header = new JObj()
             .Set("alg", JVal.Of("EdDSA"))
@@ -123,7 +126,7 @@ public static class Receipt
             .Set("raucle/v1", JVal.Of("provenance"));
 
         var headerB = Canonical.Encode(header);
-        var payloadB = Canonical.Encode(payload);
+        var payloadB = Canonical.Encode(p);
         var signingInput = B64UrlEncode(headerB) + "." + B64UrlEncode(payloadB);
 
         var signer = new Ed25519Signer();
@@ -133,7 +136,7 @@ public static class Receipt
         var sig = signer.GenerateSignature();
 
         var jws = signingInput + "." + B64UrlEncode(sig);
-        return new SignedReceipt(jws, payload, "sha256:" + Sha256Hex(Encoding.ASCII.GetBytes(jws)));
+        return new SignedReceipt(jws, p, "sha256:" + Sha256Hex(Encoding.ASCII.GetBytes(jws)));
     }
 
     public static SignedReceipt Verify(string jws, Ed25519PublicKeyParameters publicKey)

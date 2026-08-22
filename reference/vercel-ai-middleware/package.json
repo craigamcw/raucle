@@ -14,6 +14,7 @@
   "peerDependencies": { "ai": ">=4" },
   "peerDependenciesMeta": { "ai": { "optional": true } },
   "devDependencies": { "@types/node": "^22", "tsx": "^4.7.0", "typescript": "^5.4.0" },
+  "dependencies": { "@raucle/provenance": "^0.1.0" },
   "keywords": ["ai-sdk","vercel","ai-agents","provenance","capability","ai-security"],
   "engines": { "node": ">=20" }
 }

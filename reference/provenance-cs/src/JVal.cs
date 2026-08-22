@@ -55,6 +55,6 @@ public sealed record JObj(Dictionary<string, JVal> Members) : JVal
 
     public IReadOnlyList<string>? StrArray(string key) =>
         Members.TryGetValue(key, out var v) && v is JArr a
-            ? a.Items.Select(x => ((JStr)x).Value).ToList()
+            ? a.Items.Select(x => x is JStr s ? s.Value : string.Empty).Where(s => s != null).ToList() as IReadOnlyList<string>
             : null;
 }

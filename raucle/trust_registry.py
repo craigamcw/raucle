@@ -42,11 +42,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from raucle._canon import make_duplicate_key_rejecter
 from raucle.audit import (
     Ed25519Signer,
     _canonical_json,
     _sha256_hex,
 )
+
+#: Reject duplicate JSON keys in registry entries — a crafted entry with
+#: duplicate keys (e.g. {"key_id":"a","key_id":"b"}) would be silently accepted
+#: by json.loads (keeping the last value), potentially smuggling a different
+#: key_id past integrity checks. Consistent with audit.py and provenance.py.
+_reject_duplicate_keys = make_duplicate_key_rejecter("trust registry entry (JSON ambiguity)")
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +164,7 @@ class TrustRegistry:
             line = line.strip()
             if not line:
                 continue
-            self._entries.append(json.loads(line))
+            self._entries.append(json.loads(line, object_pairs_hook=_reject_duplicate_keys))
         if not self._entries:
             self._append_header()
             return

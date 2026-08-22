@@ -90,16 +90,24 @@ logger = logging.getLogger(__name__)
 # Canonicalisation + crypto helpers (mirrors feed.py / provenance.py)
 # ---------------------------------------------------------------------------
 
+#: JS safe-integer range — values outside this are not exactly representable
+#: in all five reference implementations (parity with provenance.py).
+_MAX_SAFE_INT = 2**53 - 1
+_MIN_SAFE_INT = -(2**53 - 1)
+
 
 def _reject_floats(obj: Any) -> None:
-    """Raise on any float, or any string/key carrying a lone surrogate, in signed
-    token material.
+    """Raise on any float, integer outside the JS safe-integer range, or any
+    string/key carrying a lone surrogate, in signed token material.
 
     cap:v1 numeric constraints are integers (see the standards doc). Floats are
     rejected — not serialised — so token canonicalisation stays deterministic and
-    integer-only, consistent with the provenance receipt encoder. ``bool`` is an
-    ``int`` subclass and is allowed. (Only used on the token body, never on call
-    arguments, so float call-arg values still compare against integer bounds.)
+    integer-only, consistent with the provenance receipt encoder. Integers are
+    bounded to the JS safe-integer range [-2^53+1, 2^53-1] so every value is
+    exactly representable in all five reference implementations (parity with
+    provenance.py's _reject_floats). ``bool`` is an ``int`` subclass and is
+    allowed. (Only used on the token body, never on call arguments, so float
+    call-arg values still compare against integer bounds.)
 
     Lone UTF-16 surrogates are rejected *explicitly* here (Profile R8) rather
     than incidentally via the later ``.encode("utf-8")``, so capability tokens
@@ -110,6 +118,14 @@ def _reject_floats(obj: Any) -> None:
         raise ValueError(
             "capability token: float numeric values are not permitted (cap:v1 "
             "constraints are integer-only)"
+        )
+    if isinstance(obj, bool):
+        pass  # bool is an int subclass but serialises as a JSON boolean
+    elif isinstance(obj, int) and not (_MIN_SAFE_INT <= obj <= _MAX_SAFE_INT):
+        raise ValueError(
+            f"capability token: integer {obj} is outside the portable safe-integer "
+            f"range [{_MIN_SAFE_INT}, {_MAX_SAFE_INT}] (not representable in all "
+            f"reference implementations)"
         )
     if isinstance(obj, str):
         _reject_lone_surrogates(obj)
@@ -157,13 +173,14 @@ def _now() -> int:
 
 def _require_crypto() -> Any:
     try:
+        from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import ed25519
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "raucle.capability requires the [compliance] extra: pip install 'raucle[compliance]'"
         ) from exc
-    return serialization, ed25519
+    return serialization, ed25519, InvalidSignature
 
 
 # Must start and end with [a-z0-9]. Interior chars are [a-z0-9_-] or a single
@@ -577,7 +594,7 @@ class CapabilityIssuer:
             raise ValueError("issuer must not be empty")
         self.issuer = issuer
         self._priv = private_key
-        serialization, _ = _require_crypto()
+        serialization, _ed25519, _InvalidSig = _require_crypto()
         pub_pem = private_key.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -599,7 +616,7 @@ class CapabilityIssuer:
 
     @classmethod
     def generate(cls, issuer: str, *, require_proof: bool | None = None) -> CapabilityIssuer:
-        _, ed25519 = _require_crypto()
+        _, ed25519, _ = _require_crypto()
         return cls(
             issuer=issuer,
             private_key=ed25519.Ed25519PrivateKey.generate(),
@@ -608,14 +625,26 @@ class CapabilityIssuer:
 
     @classmethod
     def load_private_key(
-        cls, issuer: str, path: str | Path, *, require_proof: bool | None = None
+        cls,
+        issuer: str,
+        path: str | Path,
+        *,
+        require_proof: bool | None = None,
+        password: bytes | str | None = None,
     ) -> CapabilityIssuer:
-        serialization, _ = _require_crypto()
-        priv = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+        """Load an issuer from a PEM private key on disk.
+
+        ``password`` supports encrypted PKCS8 PEMs. Pass ``None`` for
+        unencrypted keys (the default, preserving backward compatibility).
+        In regulated deployments, private keys at rest should be encrypted.
+        """
+        serialization, _ed, _InvalidSig = _require_crypto()
+        pw = password.encode("utf-8") if isinstance(password, str) else password
+        priv = serialization.load_pem_private_key(Path(path).read_bytes(), password=pw)
         return cls(issuer=issuer, private_key=priv, require_proof=require_proof)
 
     def save_private_key(self, path: str | Path) -> None:
-        serialization, _ = _require_crypto()
+        serialization, _ed, _InvalidSig = _require_crypto()
         pem = self._priv.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -1331,11 +1360,17 @@ class CapabilityGate:
 
     @staticmethod
     def _verify_signature(token: Capability, pem: str) -> None:
-        serialization, _ = _require_crypto()
+        serialization, _ed, InvalidSignature = _require_crypto()
         pub = serialization.load_pem_public_key(pem.encode("ascii"))
         try:
             pub.verify(_b64d(token.signature), _canonical_json(token.body()))
-        except Exception as exc:
+        except InvalidSignature as exc:
+            raise ValueError(str(exc)) from exc
+        except (ValueError, TypeError) as exc:
+            # Decode errors (bad base64, malformed key) — fail closed but with
+            # a controlled ValueError rather than letting the raw exception
+            # propagate. Unexpected exceptions are NOT caught here: they
+            # surface as bugs rather than silent verification failures.
             raise ValueError(str(exc)) from exc
 
 

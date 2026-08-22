@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from raucle._paths import validate_path
 from raucle.audit import Ed25519Signer, _canonical_json, _sha256_hex
 
 #: Passport format identifier.
@@ -106,11 +107,13 @@ class AgentPassport:
         )
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+        validate_path(path, must_exist=False).write_text(
+            json.dumps(self.to_dict(), indent=2), encoding="utf-8"
+        )
 
     @classmethod
     def load(cls, path: str | Path) -> AgentPassport:
-        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+        return cls.from_dict(json.loads(validate_path(path).read_text(encoding="utf-8")))
 
 
 @dataclass

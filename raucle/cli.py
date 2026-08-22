@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from raucle import __version__
+from raucle._paths import validate_path
 from raucle.scanner import MAX_INPUT_BYTES, Scanner
 
 logger = logging.getLogger(__name__)
@@ -711,7 +712,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if args.text:
         prompts.append(args.text)
     elif args.file:
-        file_path = Path(args.file)
+        file_path = validate_path(args.file)
         if not file_path.exists():
             print(f"Error: file not found: {args.file}", file=sys.stderr)
             return 1
@@ -873,14 +874,14 @@ def _cmd_passport(args: argparse.Namespace) -> int:
 
     cmd = getattr(args, "passport_command", None)
     if cmd == "issue":
-        statement = _json.loads(Path(args.statement).read_text())
-        signer = Ed25519Signer.from_pem(Path(args.issuer_key).read_bytes())
+        statement = _json.loads(validate_path(args.statement).read_text())
+        signer = Ed25519Signer.from_pem(validate_path(args.issuer_key).read_bytes())
         passport = issue_passport(
             statement, issuer_signer=signer, issuer=args.issuer, ttl_seconds=args.ttl
         )
         text = _json.dumps(passport.to_dict(), indent=2)
         if args.out:
-            Path(args.out).write_text(text + "\n", encoding="utf-8")
+            validate_path(args.out, must_exist=False).write_text(text + "\n", encoding="utf-8")
             print(f"Issued passport for {statement.get('agent_id', '?')} -> {args.out}")
         else:
             print(text)
@@ -889,7 +890,11 @@ def _cmd_passport(args: argparse.Namespace) -> int:
     if cmd == "verify":
         try:
             if args.registry.startswith("https://"):
-                op = Path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
+                op = (
+                    validate_path(args.operator_pubkey).read_bytes()
+                    if args.operator_pubkey
+                    else None
+                )
                 reg = TrustRegistry.from_url(args.registry, operator_public_pem=op)
             else:
                 reg = TrustRegistry.load(args.registry)
@@ -922,7 +927,7 @@ def _cmd_compliance(args: argparse.Namespace) -> int:
     if getattr(args, "compliance_command", None) != "report":
         print("error: compliance needs the 'report' subcommand", file=sys.stderr)
         return 2
-    pubkey = Path(args.pubkey).read_bytes() if getattr(args, "pubkey", None) else None
+    pubkey = validate_path(args.pubkey).read_bytes() if getattr(args, "pubkey", None) else None
     try:
         report = build_report(args.chain, framework=args.framework, public_key_pem=pubkey)
     except ValueError as exc:
@@ -939,7 +944,7 @@ def _cmd_compliance(args: argparse.Namespace) -> int:
         else render_markdown(report)
     )
     if args.out:
-        Path(args.out).write_text(text + "\n", encoding="utf-8")
+        validate_path(args.out, must_exist=False).write_text(text + "\n", encoding="utf-8")
         s = report.summary()
         counts = (
             f"{s['SATISFIED']} satisfied / {s['PARTIAL']} partial / "
@@ -969,7 +974,7 @@ def _cmd_registry(args: argparse.Namespace) -> int:
     def _signer(opt: str | None) -> Ed25519Signer | None:
         if not opt:
             return None
-        return Ed25519Signer.from_pem(Path(opt).read_bytes())
+        return Ed25519Signer.from_pem(validate_path(opt).read_bytes())
 
     if cmd == "init":
         TrustRegistry(args.path, operator_signer=_signer(args.operator_key))
@@ -979,7 +984,7 @@ def _cmd_registry(args: argparse.Namespace) -> int:
 
     if cmd == "publish":
         reg = TrustRegistry(args.path, operator_signer=_signer(args.operator_key))
-        pem = Path(args.pubkey).read_text()
+        pem = validate_path(args.pubkey).read_text()
         key_id = reg.publish(pem, issuer=args.issuer)
         print(f"Published {args.issuer!r} -> key_id {key_id}")
         return 0
@@ -993,7 +998,11 @@ def _cmd_registry(args: argparse.Namespace) -> int:
     if cmd in ("list", "resolve"):
         try:
             if args.path.startswith("https://"):
-                op = Path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
+                op = (
+                    validate_path(args.operator_pubkey).read_bytes()
+                    if args.operator_pubkey
+                    else None
+                )
                 reg = TrustRegistry.from_url(args.path, operator_public_pem=op)
             else:
                 reg = TrustRegistry.load(args.path)
@@ -1014,7 +1023,7 @@ def _cmd_registry(args: argparse.Namespace) -> int:
         return 0
 
     if cmd == "verify":
-        op_pem = Path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
+        op_pem = validate_path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
         reg = TrustRegistry.load(args.path)
         reg.verify_integrity(operator_public_pem=op_pem)
         mode = "integrity + operator signature" if op_pem else "integrity (chain)"
@@ -1034,7 +1043,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     import json as _json
     import time as _time
 
-    path = Path(args.path)
+    path = validate_path(args.path, must_exist=False)
     if not path.exists():
         print(f"error: no such file: {path}", file=sys.stderr)
         return 1
@@ -1110,7 +1119,7 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
 
     pubkey_pem: bytes | None = None
     if args.pubkey:
-        pubkey_pem = Path(args.pubkey).read_bytes()
+        pubkey_pem = validate_path(args.pubkey).read_bytes()
     report = AuditVerifier(public_key_pem=pubkey_pem).verify_chain(args.path)
 
     if args.format == "json":
@@ -1172,7 +1181,7 @@ def _load_audit_inputs(args: argparse.Namespace):
     public_keys: dict[str, bytes] = {}
     statements = {}
     for src in args.pubkeys:
-        content = Path(src).read_bytes()
+        content = validate_path(src).read_bytes()
         try:
             stmt = CapabilityStatement.from_dict(json.loads(content))
             public_keys[stmt.key_id] = stmt.public_key_pem.encode("ascii")
@@ -1180,8 +1189,8 @@ def _load_audit_inputs(args: argparse.Namespace):
         except (json.JSONDecodeError, KeyError):
             public_keys[hashlib.sha256(content).hexdigest()[:16]] = content
 
-    proofs = [json.loads(Path(p).read_text()) for p in args.proofs]
-    capabilities = [json.loads(Path(c).read_text()) for c in args.capabilities]
+    proofs = [json.loads(validate_path(p).read_text()) for p in args.proofs]
+    capabilities = [json.loads(validate_path(c).read_text()) for c in args.capabilities]
     return public_keys, statements, proofs, capabilities
 
 
@@ -1201,12 +1210,12 @@ def _cmd_audit_export(args: argparse.Namespace) -> int:
             capabilities=capabilities,
             capability_statements=statements or None,
         )
-        manifest = sign_manifest(report, Path(args.sign_key).read_bytes())
+        manifest = sign_manifest(report, validate_path(args.sign_key).read_bytes())
     except (ValueError, OSError) as exc:
         print(f"audit-export failed: {exc}", file=sys.stderr)
         return 1
 
-    out = Path(args.out)
+    out = validate_path(args.out)
     out.write_text(render_html(manifest), encoding="utf-8")
     manifest_path = out.with_suffix(out.suffix + ".manifest.json")
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1232,7 +1241,7 @@ def _cmd_audit_pack_build(args: argparse.Namespace) -> int:
         index = build_pack(
             chain_path=args.chain,
             public_keys=public_keys,
-            audit_key_pem=Path(args.sign_key).read_bytes(),
+            audit_key_pem=validate_path(args.sign_key).read_bytes(),
             out_dir=args.out,
             generated_at=int(_dt.datetime.now(_dt.timezone.utc).timestamp()),
             capability_statements=statements or None,
@@ -1295,7 +1304,7 @@ def _cmd_audit_pack_verify(args: argparse.Namespace) -> int:
 def _cmd_verify_receipt(args: argparse.Namespace) -> int:
     from raucle.verdicts import VerdictVerificationError, VerdictVerifier
 
-    pubkey_pem = Path(args.pubkey).read_bytes()
+    pubkey_pem = validate_path(args.pubkey).read_bytes()
     verifier = VerdictVerifier(public_key_pem=pubkey_pem)
     try:
         payload = verifier.verify(args.receipt, expected_input=args.input)
@@ -1330,7 +1339,7 @@ def _cmd_mcp_scan(args: argparse.Namespace) -> int:
         scan_manifest_file,
     )
 
-    path = Path(args.path)
+    path = validate_path(args.path)
     findings = scan_manifest_dir(path) if path.is_dir() else scan_manifest_file(path)
 
     if args.format == "json":
@@ -1338,7 +1347,7 @@ def _cmd_mcp_scan(args: argparse.Namespace) -> int:
     elif args.format == "sarif":
         sarif = findings_to_sarif(findings, tool_version=__version__)
         if args.sarif_out:
-            Path(args.sarif_out).write_text(json.dumps(sarif, indent=2))
+            validate_path(args.sarif_out, must_exist=False).write_text(json.dumps(sarif, indent=2))
             print(f"SARIF written to {args.sarif_out}", file=sys.stderr)
         else:
             print(json.dumps(sarif, indent=2))
@@ -1492,7 +1501,7 @@ def _cmd_provenance_graph(args: argparse.Namespace) -> int:
         return 1
 
     if args.out:
-        Path(args.out).write_text(dot)
+        validate_path(args.out, must_exist=False).write_text(dot)
         print(f"DOT graph written to {args.out}", file=sys.stderr)
     else:
         print(dot)
@@ -1506,7 +1515,7 @@ def _cmd_provenance_migrate_envelope(args: argparse.Namespace) -> int:
     # JSON or raw PEM); migration verifies each receipt's signature.
     public_keys: dict[str, bytes] = {}
     for src in args.pubkeys:
-        content = Path(src).read_bytes()
+        content = validate_path(src).read_bytes()
         try:
             stmt = CapabilityStatement.from_dict(json.loads(content))
             public_keys[stmt.key_id] = stmt.public_key_pem.encode("ascii")
@@ -1531,12 +1540,12 @@ def _cmd_provenance_replay(args: argparse.Namespace) -> int:
     from raucle.replay import InputStore, Replayer
     from raucle.scanner import Scanner
 
-    store_path = Path(args.input_store)
+    store_path = validate_path(args.input_store)
     if not store_path.exists():
         print(f"Error: input store {args.input_store} does not exist", file=sys.stderr)
         return 1
 
-    chain_path = Path(args.chain)
+    chain_path = validate_path(args.chain)
     if not chain_path.exists():
         print(f"Error: chain {args.chain} does not exist", file=sys.stderr)
         return 1
@@ -1673,7 +1682,7 @@ def _cmd_scrub(args: argparse.Namespace) -> int:
     if args.text:
         text = args.text
     elif args.file:
-        text = Path(args.file).read_text(encoding="utf-8")
+        text = validate_path(args.file).read_text(encoding="utf-8")
     else:
         if sys.stdin.isatty():
             print("Reading from stdin (Ctrl+D to finish):", file=sys.stderr)
@@ -1712,7 +1721,7 @@ def _cmd_feed_keygen(args: argparse.Namespace) -> int:
     from raucle.feed import _write_private_bytes
 
     _write_private_bytes(Path(f"{args.out}.key.pem"), _dump_priv_pem(signer))
-    Path(f"{args.out}.pub.pem").write_text(signer.public_key_pem)
+    validate_path(f"{args.out}.pub.pem", must_exist=False).write_text(signer.public_key_pem)
     print(f"Issuer:   {args.issuer}")
     print(f"Key ID:   {signer.key_id}")
     print(f"Private:  {args.out}.key.pem  (keep secret)")
@@ -1735,7 +1744,7 @@ def _cmd_feed_sign(args: argparse.Namespace) -> int:
 
     from raucle.feed import IOCSigner
 
-    drafts = _json.loads(Path(args.drafts).read_text())
+    drafts = _json.loads(validate_path(args.drafts).read_text())
     if not isinstance(drafts, list):
         print("error: drafts file must contain a JSON list", file=sys.stderr)
         return 1
@@ -1763,7 +1772,7 @@ def _cmd_feed_verify(args: argparse.Namespace) -> int:
     from raucle.feed import Feed
 
     feed = Feed.load(args.feed)
-    pubkey = Path(args.pubkey).read_text() if args.pubkey else None
+    pubkey = validate_path(args.pubkey).read_text() if args.pubkey else None
     try:
         feed.verify(pubkey_pem=pubkey)
     except ValueError as exc:
@@ -1777,7 +1786,7 @@ def _cmd_feed_verify(args: argparse.Namespace) -> int:
 def _cmd_feed_pull(args: argparse.Namespace) -> int:
     from raucle.feed import FeedStore, fetch_feed
 
-    pubkey = Path(args.pubkey).read_text()
+    pubkey = validate_path(args.pubkey).read_text()
     feed = fetch_feed(args.url)
     store = FeedStore.open(args.store)
     try:
@@ -1809,16 +1818,16 @@ def _cmd_prove(args: argparse.Namespace, kind: str) -> int:
     from raucle.prove import JSONSchemaProver, SQLClauseProver, URLPolicyProver
 
     if kind == "json":
-        schema = _json.loads(Path(args.schema).read_text())
-        policy = _json.loads(Path(args.policy).read_text())
+        schema = _json.loads(validate_path(args.schema).read_text())
+        policy = _json.loads(validate_path(args.policy).read_text())
         result = JSONSchemaProver(timeout_ms=args.timeout_ms).prove(schema, policy)
     elif kind == "url":
-        grammar = _json.loads(Path(args.grammar).read_text())
-        policy = _json.loads(Path(args.policy).read_text())
+        grammar = _json.loads(validate_path(args.grammar).read_text())
+        policy = _json.loads(validate_path(args.policy).read_text())
         result = URLPolicyProver().prove(grammar, policy)
     elif kind == "sql":
-        grammar = _json.loads(Path(args.grammar).read_text())
-        policy = _json.loads(Path(args.policy).read_text())
+        grammar = _json.loads(validate_path(args.grammar).read_text())
+        policy = _json.loads(validate_path(args.policy).read_text())
         result = SQLClauseProver().prove(grammar, policy)
     else:
         return 1
@@ -1840,7 +1849,7 @@ def _cmd_cap_keygen(args: argparse.Namespace) -> int:
 
     issuer = CapabilityIssuer.generate(issuer=args.issuer)
     issuer.save_private_key(f"{args.out}.key.pem")
-    Path(f"{args.out}.pub.pem").write_text(issuer.public_key_pem)
+    validate_path(f"{args.out}.pub.pem", must_exist=False).write_text(issuer.public_key_pem)
     print(f"Issuer:  {args.issuer}")
     print(f"Key ID:  {issuer.key_id}")
     print(f"Private: {args.out}.key.pem")
@@ -1860,7 +1869,7 @@ def _cmd_cap_mint(args: argparse.Namespace) -> int:
     # Load the ProofResult once if --proof-result was supplied.
     proof_result: ProofResult | None = None
     if args.proof_result:
-        proof_dict = _json.loads(Path(args.proof_result).read_text())
+        proof_dict = _json.loads(validate_path(args.proof_result).read_text())
         # ``ProofResult.hash`` is a derived field; strip it from the
         # ctor kwargs and let it be re-derived at access time.
         proof_dict.pop("hash", None)
@@ -1878,7 +1887,7 @@ def _cmd_cap_mint(args: argparse.Namespace) -> int:
     )
     constraints = {}
     if args.constraints:
-        constraints = _json.loads(Path(args.constraints).read_text())
+        constraints = _json.loads(validate_path(args.constraints).read_text())
 
     try:
         cap = issuer.mint(
@@ -1909,7 +1918,7 @@ def _cmd_cap_verify(args: argparse.Namespace) -> int:
     from raucle.capability import Capability, CapabilityGate
 
     cap = Capability.load(args.token)
-    pubkey = Path(args.pubkey).read_text()
+    pubkey = validate_path(args.pubkey).read_text()
     gate = CapabilityGate(trusted_issuers={cap.key_id: pubkey})
     decision = gate.check(cap, tool=cap.tool, args={})
     # `decision` may DENY for constraint reasons even on a valid token, so
@@ -1932,8 +1941,8 @@ def _cmd_cap_check(args: argparse.Namespace) -> int:
     from raucle.capability import Capability, CapabilityGate
 
     cap = Capability.load(args.token)
-    pubkey = Path(args.pubkey).read_text()
-    call_args = _json.loads(Path(args.args).read_text())
+    pubkey = validate_path(args.pubkey).read_text()
+    call_args = _json.loads(validate_path(args.args).read_text())
     gate = CapabilityGate(trusted_issuers={cap.key_id: pubkey})
     decision = gate.check(cap, tool=args.tool, agent_id=args.agent_id, args=call_args)
     if decision.allowed:
@@ -1952,7 +1961,7 @@ def _cmd_cap_attenuate(args: argparse.Namespace) -> int:
     issuer = CapabilityIssuer.load_private_key(issuer=args.issuer, path=args.key)
     extra = {}
     if args.extra_constraints:
-        extra = _json.loads(Path(args.extra_constraints).read_text())
+        extra = _json.loads(validate_path(args.extra_constraints).read_text())
     child = issuer.attenuate(
         parent,
         extra_constraints=extra,

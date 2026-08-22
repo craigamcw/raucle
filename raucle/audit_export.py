@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from raucle._paths import validate_path
+
 from . import __version__
 from .prove import ProofResult
 from .provenance import (
@@ -342,7 +344,7 @@ def build_report(
     }
 
     input_hashes = {
-        "chain_sha256": _SHA256_PREFIX + _sha256_hex(Path(chain_path).read_bytes()),
+        "chain_sha256": _SHA256_PREFIX + _sha256_hex(validate_path(chain_path).read_bytes()),
         "public_keys": {
             kid: _SHA256_PREFIX + _sha256_hex(pem) for kid, pem in sorted(public_keys.items())
         },

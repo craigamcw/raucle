@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from raucle._paths import validate_path
+
 from . import __version__
 from .audit_export import build_report, render_html, sign_manifest, verify_manifest
 from .provenance import (
@@ -137,7 +139,7 @@ def build_pack(
         dest.write_bytes(data)
         members.append({"path": rel, "role": role, "sha256": _file_hash(dest), **extra})
 
-    _emit("chain.jsonl", Path(chain_path).read_bytes(), "receipt-chain")
+    _emit("chain.jsonl", validate_path(chain_path).read_bytes(), "receipt-chain")
     _emit(
         "manifest.json",
         json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8"),

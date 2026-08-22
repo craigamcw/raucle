@@ -33,6 +33,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from raucle._paths import validate_path
+
 
 class ControlStatus(str, Enum):
     SATISFIED = "SATISFIED"  # the chain provides the evidence this control asks for
@@ -75,7 +77,7 @@ def extract_evidence(
     # is not evidence — return an unverifiable ChainEvidence rather than raising
     # (codex r6 LOW).
     try:
-        raw_lines = Path(chain_path).read_text(encoding="utf-8").splitlines()
+        raw_lines = validate_path(chain_path).read_text(encoding="utf-8").splitlines()
         declared_signed = False
         for line in raw_lines:
             line = line.strip()

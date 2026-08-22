@@ -594,7 +594,7 @@ class CapabilityIssuer:
             raise ValueError("issuer must not be empty")
         self.issuer = issuer
         self._priv = private_key
-        serialization, _ed25519, _InvalidSig = _require_crypto()
+        serialization, _ed25519, _invalid_sig = _require_crypto()
         pub_pem = private_key.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -638,13 +638,16 @@ class CapabilityIssuer:
         unencrypted keys (the default, preserving backward compatibility).
         In regulated deployments, private keys at rest should be encrypted.
         """
-        serialization, _ed, _InvalidSig = _require_crypto()
+        serialization, _ed, _invalid_sig = _require_crypto()
         pw = password.encode("utf-8") if isinstance(password, str) else password
-        priv = serialization.load_pem_private_key(Path(path).read_bytes(), password=pw)
+        key_path = Path(path).resolve()
+        if not key_path.is_file():
+            raise ValueError(f"private key file not found: {key_path}")
+        priv = serialization.load_pem_private_key(key_path.read_bytes(), password=pw)
         return cls(issuer=issuer, private_key=priv, require_proof=require_proof)
 
     def save_private_key(self, path: str | Path) -> None:
-        serialization, _ed, _InvalidSig = _require_crypto()
+        serialization, _ed, _invalid_sig = _require_crypto()
         pem = self._priv.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -1360,11 +1363,11 @@ class CapabilityGate:
 
     @staticmethod
     def _verify_signature(token: Capability, pem: str) -> None:
-        serialization, _ed, InvalidSignature = _require_crypto()
+        serialization, _ed, invalid_signature = _require_crypto()
         pub = serialization.load_pem_public_key(pem.encode("ascii"))
         try:
             pub.verify(_b64d(token.signature), _canonical_json(token.body()))
-        except InvalidSignature as exc:
+        except invalid_signature as exc:
             raise ValueError(str(exc)) from exc
         except (ValueError, TypeError) as exc:
             # Decode errors (bad base64, malformed key) — fail closed but with

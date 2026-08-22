@@ -23,8 +23,7 @@
  */
 
 import { webcrypto } from "node:crypto";
-// In the published package this is the dependency "@raucle/provenance".
-import { emit, canonicalString, type Receipt } from "../../provenance-ts/dist/index.js";
+import { emit, canonicalString, type Receipt } from "@raucle/provenance";
 
 const subtle = webcrypto.subtle;
 
@@ -183,8 +182,8 @@ export async function createRaucleSession(opts: RaucleOptions): Promise<RaucleSe
               output_hash: argsHash,
               taint: ["untrusted_user"],
               ruleset_hash: rulesetHash,
-              guardrail_verdict: verdict.decision,
-              tool: { name },
+              guardrail_verdict: verdict.decision === "BLOCK" ? "MALICIOUS" : "CLEAN",
+              tool: name,
             },
             issuer.privateKey,
           );

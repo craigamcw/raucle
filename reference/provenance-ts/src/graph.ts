@@ -22,6 +22,14 @@ export interface Chain {
  * receipts (verify each JWS with `verify()` first).
  */
 export function buildChain(receipts: Receipt[]): Chain {
+  const byId = buildByIdMap(receipts)
+  for (const r of receipts) {
+    checkTaintMonotonicity(r, byId)
+  }
+  return { receipts, byId }
+}
+
+function buildByIdMap(receipts: Receipt[]): Map<string, Receipt> {
   const byId = new Map<string, Receipt>()
 
   for (const r of receipts) {
@@ -40,44 +48,61 @@ export function buildChain(receipts: Receipt[]): Chain {
     }
     byId.set(r.id, r)
   }
+  return byId
+}
 
-  // Taint monotonicity (§7).
-  for (const r of receipts) {
-    const parentTaint = new Set<string>()
-    for (const p of r.payload.parents) {
-      for (const t of byId.get(p)!.payload.taint) parentTaint.add(t)
-    }
-    const childTaint = new Set(r.payload.taint)
-
-    if (r.payload.operation === 'sanitisation') {
-      // Sanitisation may drop tags it lists in `corpus` as
-      // "removed:<comma-separated>" (mirrors the Python verifier).
-      const corpus = (r.payload.corpus as string | undefined) ?? ''
-      const removed = new Set<string>(
-        corpus.startsWith('removed:')
-          ? corpus.slice('removed:'.length).split(',').filter((s) => s.length > 0)
-          : [],
-      )
-      const missing = [...parentTaint].filter(
-        (t) => !childTaint.has(t) && !removed.has(t),
-      )
-      if (missing.length > 0) {
-        throw new ChainError(
-          `sanitisation receipt ${r.id} dropped tags without declaring ` +
-            `them in corpus removed-set: ${missing.sort(byCodeUnit).join(', ')}`,
-        )
-      }
-    } else {
-      const missing = [...parentTaint].filter((t) => !childTaint.has(t))
-      if (missing.length > 0) {
-        throw new ChainError(
-          `taint monotonicity violation at ${r.id}: missing ${missing
-            .sort(byCodeUnit)
-            .join(', ')}`,
-        )
-      }
-    }
+function collectParentTaint(r: Receipt, byId: Map<string, Receipt>): Set<string> {
+  const parentTaint = new Set<string>()
+  for (const p of r.payload.parents) {
+    for (const t of byId.get(p)!.payload.taint) parentTaint.add(t)
   }
+  return parentTaint
+}
 
-  return { receipts, byId }
+function checkTaintMonotonicity(r: Receipt, byId: Map<string, Receipt>): void {
+  const parentTaint = collectParentTaint(r, byId)
+  const childTaint = new Set(r.payload.taint)
+
+  if (r.payload.operation === 'sanitisation') {
+    checkSanitisation(r, parentTaint, childTaint)
+  } else {
+    checkNonSanitisation(r, parentTaint, childTaint)
+  }
+}
+
+function checkSanitisation(
+  r: Receipt,
+  parentTaint: Set<string>,
+  childTaint: Set<string>,
+): void {
+  const corpus = r.payload.corpus ?? ''
+  const removed = new Set<string>(
+    corpus.startsWith('removed:')
+      ? corpus.slice('removed:'.length).split(',').filter((s) => s.length > 0)
+      : [],
+  )
+  const missing = [...parentTaint].filter(
+    (t) => !childTaint.has(t) && !removed.has(t),
+  )
+  if (missing.length > 0) {
+    missing.sort(byCodeUnit)
+    throw new ChainError(
+      `sanitisation receipt ${r.id} dropped tags without declaring ` +
+        `them in corpus removed-set: ${missing.join(', ')}`,
+    )
+  }
+}
+
+function checkNonSanitisation(
+  r: Receipt,
+  parentTaint: Set<string>,
+  childTaint: Set<string>,
+): void {
+  const missing = [...parentTaint].filter((t) => !childTaint.has(t))
+  if (missing.length > 0) {
+    missing.sort(byCodeUnit)
+    throw new ChainError(
+      `taint monotonicity violation at ${r.id}: missing ${missing.join(', ')}`,
+    )
+  }
 }

@@ -17,6 +17,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from raucle import __version__
 from raucle._paths import validate_path
@@ -708,52 +709,14 @@ def _print_rules_table(rules: list[dict]) -> None:
 def _cmd_scan(args: argparse.Namespace) -> int:
     scanner = Scanner(mode=args.mode, rules_dir=args.rules_dir)
 
-    prompts: list[str] = []
-    if args.text:
-        prompts.append(args.text)
-    elif args.file:
-        file_path = validate_path(args.file)
-        if not file_path.exists():
-            print(f"Error: file not found: {args.file}", file=sys.stderr)
-            return 1
-        file_size = file_path.stat().st_size
-        if file_size > MAX_INPUT_BYTES:
-            print(
-                f"Warning: file is {file_size:,} bytes, exceeding the "
-                f"{MAX_INPUT_BYTES:,}-byte limit. Input will be truncated.",
-                file=sys.stderr,
-            )
-        raw_bytes = file_path.read_bytes()[:MAX_INPUT_BYTES]
-        raw, encoding_errors = _decode_with_count(raw_bytes)
-        if encoding_errors:
-            print(
-                f"Warning: {encoding_errors} invalid byte(s) in {args.file} were replaced "
-                "with �. Scan results may not reflect the original content.",
-                file=sys.stderr,
-            )
-        prompts = [line.strip() for line in raw.splitlines() if line.strip()]
-    else:
-        # Read from stdin
-        if sys.stdin.isatty():
-            print("Reading from stdin (Ctrl+D to finish):", file=sys.stderr)
-        prompts = [line.strip() for line in sys.stdin if line.strip()]
-
+    prompts = _collect_scan_prompts(args)
     if not prompts:
         print("Error: no input provided.", file=sys.stderr)
         return 1
 
     results = scanner.scan_batch(prompts) if len(prompts) > 1 else [scanner.scan(prompts[0])]
 
-    if args.format == "json":
-        output = [r.to_dict() for r in results]
-        print(json.dumps(output if len(output) > 1 else output[0], indent=2))
-    else:
-        for i, result in enumerate(results):
-            if len(results) > 1:
-                _print_result_table(result, index=i)
-                print()
-            else:
-                _print_result_table(result)
+    _print_scan_results(args, results)
 
     # Exit code: 2 if any malicious, 1 if any suspicious, 0 if clean
     if any(r.verdict == "MALICIOUS" for r in results):
@@ -761,6 +724,56 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if any(r.verdict == "SUSPICIOUS" for r in results):
         return 1
     return 0
+
+
+def _collect_scan_prompts(args: argparse.Namespace) -> list[str]:
+    """Collect prompts from --text, --file, or stdin."""
+    if args.text:
+        return [args.text]
+    if args.file:
+        return _read_prompt_file(args.file)
+    # Read from stdin
+    if sys.stdin.isatty():
+        print("Reading from stdin (Ctrl+D to finish):", file=sys.stderr)
+    return [line.strip() for line in sys.stdin if line.strip()]
+
+
+def _read_prompt_file(file_path_str: str) -> list[str]:
+    """Read prompts from a file, with size and encoding warnings."""
+    file_path = validate_path(file_path_str)
+    if not file_path.exists():
+        print(f"Error: file not found: {file_path_str}", file=sys.stderr)
+        return []
+    file_size = file_path.stat().st_size
+    if file_size > MAX_INPUT_BYTES:
+        print(
+            f"Warning: file is {file_size:,} bytes, exceeding the "
+            f"{MAX_INPUT_BYTES:,}-byte limit. Input will be truncated.",
+            file=sys.stderr,
+        )
+    raw_bytes = file_path.read_bytes()[:MAX_INPUT_BYTES]
+    raw, encoding_errors = _decode_with_count(raw_bytes)
+    if encoding_errors:
+        print(
+            f"Warning: {encoding_errors} invalid byte(s) in {file_path_str} were replaced "
+            "with. Scan results may not reflect the original content.",
+            file=sys.stderr,
+        )
+    return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+def _print_scan_results(args: argparse.Namespace, results: list) -> None:
+    """Print scan results in the requested format."""
+    if args.format == "json":
+        output = [r.to_dict() for r in results]
+        print(json.dumps(output if len(output) > 1 else output[0], indent=2))
+        return
+    for i, result in enumerate(results):
+        if len(results) > 1:
+            _print_result_table(result, index=i)
+            print()
+        else:
+            _print_result_table(result)
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -864,6 +877,14 @@ def _cmd_rules_fuzz(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _load_registry(args: argparse.Namespace, TrustRegistry) -> Any:
+    """Load a TrustRegistry from a path or URL, based on args."""
+    if args.registry.startswith("https://"):
+        op = validate_path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
+        return TrustRegistry.from_url(args.registry, operator_public_pem=op)
+    return TrustRegistry.load(args.registry)
+
+
 def _cmd_passport(args: argparse.Namespace) -> int:
     """Issue or verify an agent passport."""
     import json as _json
@@ -874,48 +895,47 @@ def _cmd_passport(args: argparse.Namespace) -> int:
 
     cmd = getattr(args, "passport_command", None)
     if cmd == "issue":
-        statement = _json.loads(validate_path(args.statement).read_text())
-        signer = Ed25519Signer.from_pem(validate_path(args.issuer_key).read_bytes())
-        passport = issue_passport(
-            statement, issuer_signer=signer, issuer=args.issuer, ttl_seconds=args.ttl
-        )
-        text = _json.dumps(passport.to_dict(), indent=2)
-        if args.out:
-            validate_path(args.out, must_exist=False).write_text(text + "\n", encoding="utf-8")
-            print(f"Issued passport for {statement.get('agent_id', '?')} -> {args.out}")
-        else:
-            print(text)
-        return 0
-
+        return _passport_issue(args, _json, Ed25519Signer, issue_passport)
     if cmd == "verify":
-        try:
-            if args.registry.startswith("https://"):
-                op = (
-                    validate_path(args.operator_pubkey).read_bytes()
-                    if args.operator_pubkey
-                    else None
-                )
-                reg = TrustRegistry.from_url(args.registry, operator_public_pem=op)
-            else:
-                reg = TrustRegistry.load(args.registry)
-        except Exception as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-        passport = AgentPassport.load(args.passport)
-        v = verify_passport(passport.to_dict(), registry=reg)
-        if v.valid:
-            print(f"VALID  {v.agent_id}  (issuer: {v.issuer})")
-            print(f"  key_id: {v.key_id}")
-            if v.allowed_tools:
-                print(f"  allowed tools: {', '.join(v.allowed_tools)}")
-            if v.allowed_models:
-                print(f"  allowed models: {', '.join(v.allowed_models)}")
-            return 0
-        print(f"INVALID  {v.reason}", file=sys.stderr)
-        return 1
+        return _passport_verify(args, AgentPassport, verify_passport, TrustRegistry)
 
     print("error: passport needs 'issue' or 'verify'", file=sys.stderr)
     return 2
+
+
+def _passport_issue(args, _json, Ed25519Signer, issue_passport) -> int:
+    statement = _json.loads(validate_path(args.statement).read_text())
+    signer = Ed25519Signer.from_pem(validate_path(args.issuer_key).read_bytes())
+    passport = issue_passport(
+        statement, issuer_signer=signer, issuer=args.issuer, ttl_seconds=args.ttl
+    )
+    text = _json.dumps(passport.to_dict(), indent=2)
+    if args.out:
+        validate_path(args.out, must_exist=False).write_text(text + "\n", encoding="utf-8")
+        print(f"Issued passport for {statement.get('agent_id', '?')} -> {args.out}")
+    else:
+        print(text)
+    return 0
+
+
+def _passport_verify(args, AgentPassport, verify_passport, TrustRegistry) -> int:
+    try:
+        reg = _load_registry(args, TrustRegistry)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    passport = AgentPassport.load(args.passport)
+    v = verify_passport(passport.to_dict(), registry=reg)
+    if v.valid:
+        print(f"VALID  {v.agent_id}  (issuer: {v.issuer})")
+        print(f"  key_id: {v.key_id}")
+        if v.allowed_tools:
+            print(f"  allowed tools: {', '.join(v.allowed_tools)}")
+        if v.allowed_models:
+            print(f"  allowed models: {', '.join(v.allowed_models)}")
+        return 0
+    print(f"INVALID  {v.reason}", file=sys.stderr)
+    return 1
 
 
 def _cmd_compliance(args: argparse.Namespace) -> int:
@@ -953,6 +973,33 @@ def _cmd_compliance(args: argparse.Namespace) -> int:
         print(f"Wrote {args.framework} evidence map to {args.out} ({counts})")
     else:
         print(text)
+    return 0
+
+
+def _load_registry_from_path(args: argparse.Namespace, TrustRegistry) -> Any:
+    """Load a TrustRegistry from args.path (URL or local path)."""
+    if args.path.startswith("https://"):
+        op = validate_path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
+        return TrustRegistry.from_url(args.path, operator_public_pem=op)
+    return TrustRegistry.load(args.path)
+
+
+def _registry_list(reg: Any) -> int:
+    """Print active issuers from a registry."""
+    active = [r for r in reg.records() if not r.revoked]
+    for r in active:
+        print(f"{r.key_id}  {r.issuer}")
+    print(f"({len(active)} active issuer(s))")
+    return 0
+
+
+def _registry_resolve(args: argparse.Namespace, reg: Any, _json: Any) -> int:
+    """Resolve and print a single key_id from a registry."""
+    rec = reg.resolve(args.key_id)
+    if rec is None:
+        print(f"error: key_id {args.key_id} not in registry", file=sys.stderr)
+        return 1
+    print(_json.dumps(rec.to_dict(), indent=2))
     return 0
 
 
@@ -997,30 +1044,13 @@ def _cmd_registry(args: argparse.Namespace) -> int:
 
     if cmd in ("list", "resolve"):
         try:
-            if args.path.startswith("https://"):
-                op = (
-                    validate_path(args.operator_pubkey).read_bytes()
-                    if args.operator_pubkey
-                    else None
-                )
-                reg = TrustRegistry.from_url(args.path, operator_public_pem=op)
-            else:
-                reg = TrustRegistry.load(args.path)
+            reg = _load_registry_from_path(args, TrustRegistry)
         except Exception as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         if cmd == "list":
-            active = [r for r in reg.records() if not r.revoked]
-            for r in active:
-                print(f"{r.key_id}  {r.issuer}")
-            print(f"({len(active)} active issuer(s))")
-            return 0
-        rec = reg.resolve(args.key_id)
-        if rec is None:
-            print(f"error: key_id {args.key_id} not in registry", file=sys.stderr)
-            return 1
-        print(_json.dumps(rec.to_dict(), indent=2))
-        return 0
+            return _registry_list(reg)
+        return _registry_resolve(args, reg, _json)
 
     if cmd == "verify":
         op_pem = validate_path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
@@ -1032,6 +1062,29 @@ def _cmd_registry(args: argparse.Namespace) -> int:
 
     print(f"error: unknown registry subcommand {cmd!r}", file=sys.stderr)
     return 2
+
+
+def _render_decision(ev: dict, ts: str, paint, args: argparse.Namespace) -> None:
+    """Render a gate decision event."""
+    verdict = ev["decision"]
+    if args.denies_only and verdict == "ALLOW":
+        return
+    colored = paint(f"{verdict:5s}", "32" if verdict == "ALLOW" else "1;31")
+    reason = ev.get("decision_reason") or ""
+    detail = f"  ({reason})" if reason and verdict != "ALLOW" else ""
+    agent = ev.get("agent_id", "?")
+    print(f"{ts}  {colored}  gate  {agent:28s} {ev.get('tool', '?')}{detail}")
+
+
+def _render_verdict(ev: dict, ts: str, paint, args: argparse.Namespace) -> None:
+    """Render a scan verdict event."""
+    verdict = ev["verdict"]
+    if args.denies_only and verdict == "CLEAN":
+        return
+    code = {"CLEAN": "32", "SUSPICIOUS": "33", "MALICIOUS": "1;31"}.get(verdict, "0")
+    rules = ",".join(ev.get("matched_rules") or [])
+    detail = f"  [{rules}]" if rules else ""
+    print(f"{ts}  {paint(f'{verdict:10s}', code)}  scan  {ev.get('kind', 'scan')}{detail}")
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
@@ -1069,25 +1122,10 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     def render(ev: dict) -> None:
         ts = str(ev.get("timestamp", ""))[:19]
         if "decision" in ev:
-            verdict = ev["decision"]
-            if args.denies_only and verdict == "ALLOW":
-                return
-            colored = paint(f"{verdict:5s}", "32" if verdict == "ALLOW" else "1;31")
-            reason = ev.get("decision_reason") or ""
-            detail = f"  ({reason})" if reason and verdict != "ALLOW" else ""
-            agent = ev.get("agent_id", "?")
-            print(f"{ts}  {colored}  gate  {agent:28s} {ev.get('tool', '?')}{detail}")
+            _render_decision(ev, ts, paint, args)
         elif "verdict" in ev:
-            verdict = ev["verdict"]
-            if args.denies_only and verdict == "CLEAN":
-                return
-            code = {"CLEAN": "32", "SUSPICIOUS": "33", "MALICIOUS": "1;31"}.get(verdict, "0")
-            rules = ",".join(ev.get("matched_rules") or [])
-            detail = f"  [{rules}]" if rules else ""
-            print(f"{ts}  {paint(f'{verdict:10s}', code)}  scan  {ev.get('kind', 'scan')}{detail}")
-        elif rec_is_meta(ev):
-            return
-        else:
+            _render_verdict(ev, ts, paint, args)
+        elif not rec_is_meta(ev):
             print(f"{ts}  {ev.get('kind', 'event')}")
 
     def rec_is_meta(ev: dict) -> bool:
@@ -1112,6 +1150,16 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                     render(ev)
         except KeyboardInterrupt:
             return 0
+
+
+def _print_report_errors(report: Any) -> None:
+    """Print up to 10 errors from a verification report."""
+    if report.errors:
+        print("\nErrors:")
+        for e in report.errors[:10]:
+            print(f"  - {e}")
+        if len(report.errors) > 10:
+            print(f"  … and {len(report.errors) - 10} more")
 
 
 def _cmd_audit_verify(args: argparse.Namespace) -> int:
@@ -2057,81 +2105,62 @@ def _dispatch(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "scan":
-        return _cmd_scan(args)
-    elif args.command == "scan-image":
-        return _cmd_scan_image(args)
-    elif args.command == "scan-pdf":
-        return _cmd_scan_pdf(args)
-    elif args.command == "scrub":
-        return _cmd_scrub(args)
-    elif args.command == "serve":
-        return _cmd_serve(args)
-    elif args.command == "rules" and args.rules_command == "list":
-        return _cmd_rules(args)
-    elif args.command == "rules" and args.rules_command == "fuzz":
-        return _cmd_rules_fuzz(args)
-    elif args.command == "audit" and args.audit_command == "verify":
-        return _cmd_audit_verify(args)
-    elif args.command == "audit" and args.audit_command == "keygen":
-        return _cmd_audit_keygen(args)
-    elif args.command == "watch":
-        return _cmd_watch(args)
-    elif args.command == "registry":
-        return _cmd_registry(args)
-    elif args.command == "compliance":
-        return _cmd_compliance(args)
-    elif args.command == "passport":
-        return _cmd_passport(args)
-    elif args.command == "verify-receipt":
-        return _cmd_verify_receipt(args)
-    elif args.command == "audit-export":
-        return _cmd_audit_export(args)
-    elif args.command == "audit-pack" and args.audit_pack_command == "build":
-        return _cmd_audit_pack_build(args)
-    elif args.command == "audit-pack" and args.audit_pack_command == "verify":
-        return _cmd_audit_pack_verify(args)
-    elif args.command == "mcp" and args.mcp_command == "serve":
-        return _cmd_mcp_serve(args)
-    elif args.command == "mcp" and args.mcp_command == "scan":
-        return _cmd_mcp_scan(args)
-    elif args.command == "provenance" and args.provenance_command == "keygen":
-        return _cmd_provenance_keygen(args)
-    elif args.command == "provenance" and args.provenance_command == "verify":
-        return _cmd_provenance_verify(args)
-    elif args.command == "provenance" and args.provenance_command == "trace":
-        return _cmd_provenance_trace(args)
-    elif args.command == "provenance" and args.provenance_command == "graph":
-        return _cmd_provenance_graph(args)
-    elif args.command == "provenance" and args.provenance_command == "replay":
-        return _cmd_provenance_replay(args)
-    elif args.command == "provenance" and args.provenance_command == "migrate-envelope":
-        return _cmd_provenance_migrate_envelope(args)
-    elif args.command == "feed" and args.feed_command == "keygen":
-        return _cmd_feed_keygen(args)
-    elif args.command == "feed" and args.feed_command == "sign":
-        return _cmd_feed_sign(args)
-    elif args.command == "feed" and args.feed_command == "verify":
-        return _cmd_feed_verify(args)
-    elif args.command == "feed" and args.feed_command == "pull":
-        return _cmd_feed_pull(args)
-    elif args.command == "feed" and args.feed_command == "list":
-        return _cmd_feed_list(args)
-    elif args.command == "prove" and args.prove_command in {"json", "url", "sql"}:
+    # Simple single-command dispatch (no subcommand).
+    _SIMPLE_COMMANDS: dict[str, Any] = {
+        "scan": _cmd_scan,
+        "scan-image": _cmd_scan_image,
+        "scan-pdf": _cmd_scan_pdf,
+        "scrub": _cmd_scrub,
+        "serve": _cmd_serve,
+        "watch": _cmd_watch,
+        "registry": _cmd_registry,
+        "compliance": _cmd_compliance,
+        "passport": _cmd_passport,
+        "verify-receipt": _cmd_verify_receipt,
+        "audit-export": _cmd_audit_export,
+    }
+    handler = _SIMPLE_COMMANDS.get(args.command)
+    if handler:
+        return handler(args)
+
+    # Subcommand dispatch: (command, subcommand) -> handler.
+    _SUBCOMMANDS: dict[tuple[str, str | None], Any] = {
+        ("rules", "list"): _cmd_rules,
+        ("rules", "fuzz"): _cmd_rules_fuzz,
+        ("audit", "verify"): _cmd_audit_verify,
+        ("audit", "keygen"): _cmd_audit_keygen,
+        ("audit-pack", "build"): _cmd_audit_pack_build,
+        ("audit-pack", "verify"): _cmd_audit_pack_verify,
+        ("mcp", "serve"): _cmd_mcp_serve,
+        ("mcp", "scan"): _cmd_mcp_scan,
+        ("provenance", "keygen"): _cmd_provenance_keygen,
+        ("provenance", "verify"): _cmd_provenance_verify,
+        ("provenance", "trace"): _cmd_provenance_trace,
+        ("provenance", "graph"): _cmd_provenance_graph,
+        ("provenance", "replay"): _cmd_provenance_replay,
+        ("provenance", "migrate-envelope"): _cmd_provenance_migrate_envelope,
+        ("feed", "keygen"): _cmd_feed_keygen,
+        ("feed", "sign"): _cmd_feed_sign,
+        ("feed", "verify"): _cmd_feed_verify,
+        ("feed", "pull"): _cmd_feed_pull,
+        ("feed", "list"): _cmd_feed_list,
+        ("cap", "keygen"): _cmd_cap_keygen,
+        ("cap", "mint"): _cmd_cap_mint,
+        ("cap", "verify"): _cmd_cap_verify,
+        ("cap", "check"): _cmd_cap_check,
+        ("cap", "attenuate"): _cmd_cap_attenuate,
+    }
+    sub = getattr(args, f"{args.command.replace('-', '_')}_command", None) if args.command else None
+    handler = _SUBCOMMANDS.get((args.command, sub))
+    if handler:
+        return handler(args)
+
+    # Special case: prove accepts json/url/sql subcommands.
+    if args.command == "prove" and getattr(args, "prove_command", None) in {"json", "url", "sql"}:
         return _cmd_prove(args, args.prove_command)
-    elif args.command == "cap" and args.cap_command == "keygen":
-        return _cmd_cap_keygen(args)
-    elif args.command == "cap" and args.cap_command == "mint":
-        return _cmd_cap_mint(args)
-    elif args.command == "cap" and args.cap_command == "verify":
-        return _cmd_cap_verify(args)
-    elif args.command == "cap" and args.cap_command == "check":
-        return _cmd_cap_check(args)
-    elif args.command == "cap" and args.cap_command == "attenuate":
-        return _cmd_cap_attenuate(args)
-    else:
-        parser.print_help()
-        return 0
+
+    parser.print_help()
+    return 0
 
 
 if __name__ == "__main__":

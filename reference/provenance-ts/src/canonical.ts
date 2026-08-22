@@ -19,7 +19,11 @@
  * code-unit ordering, and would silently break byte-identity with the Python /
  * Go / Rust / C# reference implementations.
  */
-export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+export function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1
+  if (a > b) return 1
+  return 0
+}
 
 /**
  * Reject unpaired UTF-16 surrogates. JS strings are UTF-16, so a valid non-BMP
@@ -31,20 +35,21 @@ export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b 
  */
 function rejectLoneSurrogates(s: string): void {
   for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i)
-    if (c >= 0xd800 && c <= 0xdbff) {
-      const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        i++ // valid pair — skip the low surrogate
-        continue
-      }
-    } else if (c < 0xdc00 || c > 0xdfff) {
+    const c = s.codePointAt(i)!
+    // codePointAt returns the full code point for a valid surrogate pair,
+    // so a value > 0xFFFF means a valid pair — skip both code units.
+    if (c > 0xFFFF) {
+      i++ // valid surrogate pair — skip the low surrogate
       continue
     }
-    throw new TypeError(
-      `canonical-JSON: lone surrogate U+${c.toString(16).toUpperCase().padStart(4, '0')} ` +
-        'is not permitted in v1 signed/hashed material',
-    )
+    // Values in the surrogate range (0xD800–0xDFFF) here are lone surrogates
+    // (codePointAt on a lone surrogate returns the surrogate code unit itself).
+    if (c >= 0xd800 && c <= 0xdfff) {
+      throw new TypeError(
+        `canonical-JSON: lone surrogate U+${c.toString(16).toUpperCase().padStart(4, '0')} ` +
+          'is not permitted in v1 signed/hashed material',
+      )
+    }
   }
 }
 

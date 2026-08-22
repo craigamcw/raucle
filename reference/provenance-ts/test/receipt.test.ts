@@ -215,7 +215,7 @@ test('sanitisation undeclared drop fails', async () => {
 
 function b64uToBytes(s: string): Uint8Array {
   const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4))
-  return new Uint8Array(Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64'))
+  return new Uint8Array(Buffer.from(s.replaceAll('-', '+').replaceAll('_', '/') + pad, 'base64'))
 }
 
 async function importSeedKey(seedHex: string): Promise<webcrypto.CryptoKey> {
@@ -268,7 +268,7 @@ test('verify rejects non-canonical payload bytes', async () => {
   const b64u = (b: Uint8Array) =>
     Buffer.from(b).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
   const b64uDecode = (s: string) =>
-    new Uint8Array(Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64'))
+    new Uint8Array(Buffer.from(s.replaceAll('-', '+').replaceAll('_', '/'), 'base64'))
   const obj = JSON.parse(new TextDecoder().decode(b64uDecode(payloadB)))
   const noncanon = new TextEncoder().encode(JSON.stringify(obj, null, 2)) // whitespace
   const signingInput = `${headerB}.${b64u(noncanon)}`

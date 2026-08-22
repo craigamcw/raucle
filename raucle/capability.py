@@ -1394,9 +1394,7 @@ class CapabilityGate:
         return None
 
     @staticmethod
-    def _check_proof_hash_mismatch(
-        token: Capability, proof: Any
-    ) -> GateDecision | None:
+    def _check_proof_hash_mismatch(token: Capability, proof: Any) -> GateDecision | None:
         """Check proof status and hash binding. Returns a DENY decision or None."""
         if proof.status != "PROVEN":
             return GateDecision(
@@ -1502,18 +1500,37 @@ def _check_constraints(c: dict[str, Any], args: dict[str, Any]) -> str | None:
     # check — blacklists deny on ANY contained scalar (exists), positive/bound
     # constraints require ALL contained scalars to satisfy (for-all).
 
-    # forbidden_values — EXISTS_DENY: a present, forbidden scalar anywhere in the
-    # argument (incl. nested in a list/dict, keys included) is a violation.
+    checkers = [
+        _check_forbidden_values,
+        _check_allowed_values,
+        _check_starts_with,
+        _check_max_value,
+        _check_min_value,
+        _check_required_present,
+        _check_forbidden_combinations,
+    ]
+    for checker in checkers:
+        reason = checker(c, args)
+        if reason:
+            return reason
+    return None
+
+
+def _check_forbidden_values(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """forbidden_values — EXISTS_DENY: a present, forbidden scalar anywhere in
+    the argument (incl. nested in a list/dict, keys included) is a violation."""
     for fld, bads in c.get("forbidden_values", {}).items():
         if fld not in args:
             continue
         for scalar in _flatten_scalars(args[fld]):
             if scalar in bads:
                 return f"{fld}={scalar!r} is in forbidden_values"
+    return None
 
-    # allowed_values — FORALL_ALLOW: field MUST be present and EVERY contained
-    # scalar must be in the allowed set. An empty collection carries no checkable
-    # value and is denied (cannot demonstrate the constraint is satisfied).
+
+def _check_allowed_values(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """allowed_values — FORALL_ALLOW: field MUST be present and EVERY contained
+    scalar must be in the allowed set."""
     for fld, oks in c.get("allowed_values", {}).items():
         if fld not in args:
             return f"allowed_values field {fld!r} is absent from the call"
@@ -1523,17 +1540,23 @@ def _check_constraints(c: dict[str, Any], args: dict[str, Any]) -> str | None:
         for scalar in scalars:
             if scalar not in oks:
                 return f"{fld} contains {scalar!r} which is not in allowed_values"
+    return None
 
-    # starts_with — STRING_ONLY: field MUST be present and be a string with the
-    # prefix. Any non-string (including any collection) is denied.
+
+def _check_starts_with(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """starts_with — STRING_ONLY: field MUST be present and be a string with the
+    prefix. Any non-string (including any collection) is denied."""
     for fld, prefix in c.get("starts_with", {}).items():
         if fld not in args:
             return f"starts_with field {fld!r} is absent from the call"
         if not (isinstance(args[fld], str) and args[fld].startswith(prefix)):
             return f"{fld}={args[fld]!r} does not start with {prefix!r}"
+    return None
 
-    # max_value / min_value — FORALL_NUMERIC: field MUST be present and EVERY
-    # contained scalar must be a finite non-bool number satisfying the bound.
+
+def _check_max_value(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """max_value — FORALL_NUMERIC: field MUST be present and EVERY contained
+    scalar must be a finite non-bool number satisfying the upper bound."""
     for fld, bound in c.get("max_value", {}).items():
         if fld not in args:
             return f"max_value field {fld!r} is absent from the call"
@@ -1545,6 +1568,12 @@ def _check_constraints(c: dict[str, Any], args: dict[str, Any]) -> str | None:
                 return f"{fld} contains {scalar!r} which is not a number (max_value)"
             if scalar > bound:
                 return f"{fld} contains {scalar!r} exceeding max_value {bound!r}"
+    return None
+
+
+def _check_min_value(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """min_value — FORALL_NUMERIC: field MUST be present and EVERY contained
+    scalar must be a finite non-bool number satisfying the lower bound."""
     for fld, bound in c.get("min_value", {}).items():
         if fld not in args:
             return f"min_value field {fld!r} is absent from the call"
@@ -1556,12 +1585,20 @@ def _check_constraints(c: dict[str, Any], args: dict[str, Any]) -> str | None:
                 return f"{fld} contains {scalar!r} which is not a number (min_value)"
             if scalar < bound:
                 return f"{fld} contains {scalar!r} below min_value {bound!r}"
+    return None
 
-    # required_present / forbidden_field_combinations — PRESENCE: only the
-    # field's presence matters; the value (collection or not) is irrelevant.
+
+def _check_required_present(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """required_present — PRESENCE: only the field's presence matters."""
     for fld in c.get("required_present", []):
         if fld not in args:
             return f"required field {fld!r} missing"
+    return None
+
+
+def _check_forbidden_combinations(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """forbidden_field_combinations — PRESENCE: deny if all fields in a
+    forbidden combination are present."""
     for combo in c.get("forbidden_field_combinations", []):
         if all(c2 in args for c2 in combo):
             return f"forbidden field combination {combo!r} all present"

@@ -523,6 +523,7 @@ def _severity_to_score(severity: str) -> float:
 _MAX_FEED_BYTES = 8 * 1024 * 1024
 
 # Cloud-provider link-local metadata endpoint (AWS/GCP/Azure IMDS).
+# Intentionally blocked for SSRF prevention.
 _METADATA_IP = "169.254.169.254"
 
 
@@ -625,6 +626,8 @@ def fetch_https_pinned(
     # Pin a TLS 1.2 floor explicitly (defence in depth against downgrade).
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
+    # SSRF protection: DNS resolution is pinned, redirects are refused,
+    # and private/loopback/metadata IPs are blocked by _is_blocked_ip.
     class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         def connect(self) -> None:  # type: ignore[override]
             sock = socket.create_connection((pinned_ip, port), timeout)

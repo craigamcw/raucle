@@ -240,6 +240,7 @@ def _b64url_decode(data: str) -> bytes:
 #: (or lossy) in the TS port — a cross-language canonical divergence (§8.10 #6).
 _MAX_SAFE_INT = 2**53 - 1
 _MIN_SAFE_INT = -(2**53 - 1)
+_SHA256_PREFIX = "sha256:"
 
 
 def _reject_floats(obj: Any) -> None:
@@ -319,12 +320,12 @@ _reject_duplicate_keys = _make_duplicate_key_rejecter("JSON object")
 
 def hash_text(text: str) -> str:
     """Hash an input or output string for receipt inclusion."""
-    return "sha256:" + _sha256_hex(text.encode("utf-8"))
+    return _SHA256_PREFIX + _sha256_hex(text.encode("utf-8"))
 
 
 def hash_obj(obj: Any) -> str:
     """Hash an arbitrary JSON-serialisable object for receipt inclusion."""
-    return "sha256:" + _sha256_hex(_canonical_json(obj))
+    return _SHA256_PREFIX + _sha256_hex(_canonical_json(obj))
 
 
 # Mirror the hardened capability gate grammar: dots must sit between
@@ -712,7 +713,7 @@ class ProvenanceReceipt:
         ).encode("ascii")
         sig = identity.sign(signing_input)
         self.jws = signing_input.decode("ascii") + "." + _b64url_encode(sig)
-        self.receipt_hash = "sha256:" + _sha256_hex(self.jws.encode("ascii"))
+        self.receipt_hash = _SHA256_PREFIX + _sha256_hex(self.jws.encode("ascii"))
         return self.jws
 
     def to_jws(self) -> str:
@@ -804,7 +805,7 @@ class ProvenanceReceipt:
             issued_at=payload.get("iat", 0),
         )
         receipt.jws = jws
-        receipt.receipt_hash = "sha256:" + _sha256_hex(jws.encode("ascii"))
+        receipt.receipt_hash = _SHA256_PREFIX + _sha256_hex(jws.encode("ascii"))
         # §3.3: a strict standalone parse is also structurally validated, so a
         # malformed receipt (bad root rule, missing required field, unsorted
         # parents/taint) is rejected here rather than silently parsing. The
@@ -967,7 +968,7 @@ class ProvenanceLogger:
                     receipt = ProvenanceReceipt.from_jws(jws)
                     if receipt.receipt_hash:
                         self._taint_by_hash[receipt.receipt_hash] = set(receipt.taint)
-                except (json.JSONDecodeError, KeyError, ValueError):
+                except (ValueError, KeyError):
                     continue
 
     # ------------------------------------------------------------------
@@ -1354,7 +1355,7 @@ class ProvenanceVerifier:
                     extra = _registry.unknown_envelope_fields(set(raw))
                     if extra:
                         raise ValueError(f"unknown envelope field(s): {sorted(extra)}")
-                    # validate_structure=False: the chain verifier reports each
+                    # With validate_structure disabled: the chain verifier reports each
                     # structural error per-line below (via _structural_errors)
                     # rather than raising on the first, so callers see the full
                     # set of problems in one report.
@@ -1645,7 +1646,7 @@ class ProvenanceVerifier:
                 try:
                     raw = json.loads(line)
                     r = ProvenanceReceipt.from_jws(raw["jws"])
-                except (json.JSONDecodeError, ValueError, KeyError):
+                except (ValueError, KeyError):
                     continue
                 out[r.receipt_hash] = r
         return out

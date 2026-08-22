@@ -977,7 +977,7 @@ def _merge_narrowing(parent: dict[str, Any], extra: dict[str, Any]) -> dict[str,
     for fld, vals in extra.get("allowed_values", {}).items():
         out.setdefault("allowed_values", {})
         if fld in out["allowed_values"]:
-            # Intersection = tighter
+            # Intersecting is tighter
             out["allowed_values"][fld] = _intersect_values(out["allowed_values"][fld], vals)
         else:
             out["allowed_values"][fld] = _union_values(vals, [])
@@ -1420,11 +1420,11 @@ class CapabilityGate:
 
     @staticmethod
     def _verify_signature(token: Capability, pem: str) -> None:
-        serialization, _ed, invalid_signature = _require_crypto()
+        serialization, _ed, _invalid_sig = _require_crypto()
         pub = serialization.load_pem_public_key(pem.encode("ascii"))
         try:
             pub.verify(_b64d(token.signature), _canonical_json(token.body()))
-        except invalid_signature as exc:
+        except _invalid_sig as exc:
             raise ValueError(str(exc)) from exc
         except (ValueError, TypeError) as exc:
             # Decode errors (bad base64, malformed key) — fail closed but with

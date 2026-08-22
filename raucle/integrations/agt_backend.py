@@ -108,7 +108,7 @@ class RauclePolicyBackend:
         # Lazy import — raucle stays importable without AGT installed.
         from agent_os.policies.backends import BackendDecision  # noqa: F401
 
-        self._BackendDecision = BackendDecision
+        self._backend_decision = BackendDecision
         self._gate = gate
         self._base = verification_base_url.rstrip("/")
         self._issuer_pubkey_path = issuer_pubkey_path
@@ -198,7 +198,7 @@ class RauclePolicyBackend:
         if self._supports_assurance_fields:
             kwargs["proof_artefact"] = proof_artefact
             kwargs["verification_pointers"] = verification_pointers or {}
-        return self._BackendDecision(**kwargs)
+        return self._backend_decision(**kwargs)
 
     def _pointers(self) -> dict[str, str]:
         pointers = {

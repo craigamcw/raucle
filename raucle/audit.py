@@ -89,7 +89,7 @@ class Ed25519Signer:
             # verifier can attribute. Surface, don't swallow.
             from raucle.errors import ConfigurationError
 
-            logger.error("Ed25519Signer: failed to extract public key bytes: %s", exc)
+            logger.exception("Ed25519Signer: failed to extract public key bytes: %s", exc)
             raise ConfigurationError(
                 f"Ed25519Signer: failed to extract public key bytes: {exc}"
             ) from exc

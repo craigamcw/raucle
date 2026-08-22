@@ -534,7 +534,7 @@ def render_html(manifest: dict[str, Any]) -> str:
 <p>Public keys:</p><ul>{pk or "<li>none</li>"}</ul>
 <p>Capability statements (gate allowed-tools / models — they affect node
  status):</p><ul>{cs or "<li>none (no per-agent tool/model enforcement applied)</li>"}</ul>
-<p>Proof certificates: {_esc(", ".join(h for h in body["input_hashes"]["proofs"]) or "none")}</p>
+<p>Proof certificates: {_esc(", ".join(body["input_hashes"]["proofs"]) or "none")}</p>
 
 <h2>Verify this report yourself</h2>
 <ol>

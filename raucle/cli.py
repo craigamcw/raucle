@@ -25,6 +25,8 @@ from raucle.scanner import MAX_INPUT_BYTES, Scanner
 
 logger = logging.getLogger(__name__)
 
+_REGISTRY_DESC = "Registry JSONL file"
+
 # Repeated argparse help strings, named once (Sonar S1192).
 _HELP_OUTPUT_FORMAT = "Output format"
 _HELP_RULES_DIR = "Path to custom YAML rules directory"
@@ -233,7 +235,7 @@ def _build_parser() -> argparse.ArgumentParser:
     reg_sub = reg_p.add_subparsers(dest="registry_command")
 
     reg_init = reg_sub.add_parser("init", help="Create a new (optionally signed) registry")
-    reg_init.add_argument("path", help="Registry JSONL file to create")
+    reg_init.add_argument("path", help=_REGISTRY_DESC + " to create")
     reg_init.add_argument("--operator-key", help="Operator private key PEM to sign the registry")
 
     reg_pub = reg_sub.add_parser("publish", help="Publish an issuer public key to the registry")
@@ -663,7 +665,6 @@ def _decode_with_count(raw: bytes, encoding: str = "utf-8") -> tuple[str, int]:
 
 def _print_result_table(result, index: int | None = None) -> None:
     prefix = f"[{index}] " if index is not None else ""
-    verdict_display = result.verdict
     if result.verdict == "MALICIOUS":
         verdict_display = f"\033[91m{result.verdict}\033[0m"
     elif result.verdict == "SUSPICIOUS":

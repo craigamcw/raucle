@@ -407,7 +407,97 @@ class CapabilityStatement:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CapabilityStatement:
-        return cls(**d)
+        # The statement must be a JSON object; a non-object is invalid signed
+        # material and must fail closed with a ValueError, not a TypeError from
+        # cls(**d) on a non-mapping.
+        if not isinstance(d, dict):
+            raise ValueError(f"capability statement: must be a JSON object, got {type(d).__name__}")
+
+        def _req_str(name: str) -> str:
+            v = d.get(name)
+            if not isinstance(v, str) or not v:
+                raise ValueError(
+                    f"capability statement: {name} must be a non-empty string, "
+                    f"got {type(v).__name__} {v!r}"
+                )
+            return v
+
+        def _opt_str(name: str) -> str:
+            v = d.get(name, "")
+            if v is not None and not isinstance(v, str):
+                raise ValueError(
+                    f"capability statement: {name} must be a string or absent, "
+                    f"got {type(v).__name__} {v!r}"
+                )
+            return v if v is not None else ""
+
+        def _opt_int(name: str, default: int = 0) -> int:
+            v = d.get(name, default)
+            if v is None:
+                return default
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError(
+                    f"capability statement: {name} must be an integer, got {type(v).__name__} {v!r}"
+                )
+            return v
+
+        def _opt_int_or_none(name: str) -> int | None:
+            v = d.get(name)
+            if v is None:
+                return None
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError(
+                    f"capability statement: {name} must be an integer or null, "
+                    f"got {type(v).__name__} {v!r}"
+                )
+            return v
+
+        def _opt_str_list(name: str) -> list[str]:
+            v = d.get(name, [])
+            if not isinstance(v, list):
+                raise ValueError(
+                    f"capability statement: {name} must be a list, got {type(v).__name__} {v!r}"
+                )
+            for item in v:
+                if not isinstance(item, str):
+                    raise ValueError(
+                        f"capability statement: {name} must be a list of strings, "
+                        f"got {type(item).__name__} {item!r}"
+                    )
+            return v
+
+        # Reject unknown keys so a crafted statement can't smuggle extra fields
+        # past the parser (defence in depth at the trust boundary).
+        known = {
+            "agent_id",
+            "key_id",
+            "public_key_pem",
+            "allowed_models",
+            "allowed_tools",
+            "data_classifications",
+            "sanitisation_authority",
+            "issuer",
+            "issued_at",
+            "expires_at",
+            "signature",
+        }
+        unknown = set(d) - known
+        if unknown:
+            raise ValueError(f"capability statement: unknown field(s) {sorted(unknown)}")
+
+        return cls(
+            agent_id=_req_str("agent_id"),
+            key_id=_req_str("key_id"),
+            public_key_pem=_req_str("public_key_pem"),
+            allowed_models=_opt_str_list("allowed_models"),
+            allowed_tools=_opt_str_list("allowed_tools"),
+            data_classifications=_opt_str_list("data_classifications"),
+            sanitisation_authority=_opt_str_list("sanitisation_authority"),
+            issuer=_req_str("issuer"),
+            issued_at=_opt_int("issued_at"),
+            expires_at=_opt_int_or_none("expires_at"),
+            signature=_opt_str("signature"),
+        )
 
     def permits_model(self, model: str) -> bool:
         if not self.allowed_models:
@@ -500,11 +590,22 @@ class AgentIdentity:
         return cls(agent_id=agent_id, private_key=priv, statement=stmt)
 
     @classmethod
-    def load(cls, private_key_pem: bytes, statement: CapabilityStatement) -> AgentIdentity:
-        """Load an identity from a stored PEM + statement."""
+    def load(
+        cls,
+        private_key_pem: bytes,
+        statement: CapabilityStatement,
+        *,
+        password: bytes | str | None = None,
+    ) -> AgentIdentity:
+        """Load an identity from a stored PEM + statement.
+
+        ``password`` supports encrypted PKCS8 PEMs. Pass ``None`` for
+        unencrypted keys (the default, preserving backward compatibility).
+        """
         from cryptography.hazmat.primitives import serialization
 
-        priv = serialization.load_pem_private_key(private_key_pem, password=None)
+        pw = password.encode("utf-8") if isinstance(password, str) else password
+        priv = serialization.load_pem_private_key(private_key_pem, password=pw)
         return cls(agent_id=statement.agent_id, private_key=priv, statement=statement)
 
     @property
@@ -1423,6 +1524,8 @@ class ProvenanceVerifier:
     # ------------------------------------------------------------------
 
     def _verify_signature(self, receipt: ProvenanceReceipt) -> bool:
+        from cryptography.exceptions import InvalidSignature
+
         key = self._keys.get(receipt.agent_key_id)
         if key is None:
             return False
@@ -1431,7 +1534,12 @@ class ProvenanceVerifier:
             signing_input = (header_b64 + "." + payload_b64).encode("ascii")
             key.verify(_b64url_decode(sig_b64), signing_input)
             return True
-        except Exception:
+        except InvalidSignature:
+            return False
+        except (ValueError, TypeError, KeyError):
+            # Decode errors (bad base64, malformed JWS structure, missing key)
+            # — fail closed. Unexpected exceptions propagate as bugs rather
+            # than silent verification failures.
             return False
 
     def _verify_statement(self, stmt: CapabilityStatement, agent_key_id: str) -> bool:

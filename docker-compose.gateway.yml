@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  raucle-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: raucle-gateway
+    ports:
+      - "8080:8080"  # Gateway API (agent -> tools)
+      - "8081:8081"  # Admin panel
+    environment:
+      - RAUCLE_GATEWAY_HOST=0.0.0.0
+      - RAUCLE_GATEWAY_PORT=8080
+      - RAUCLE_ADMIN_PORT=8081
+      - RAUCLE_ADMIN_KEY=${RAUCLE_ADMIN_KEY:-changeme}
+      - RAUCLE_SIGNER=${RAUCLE_SIGNER:-local}
+      - RAUCLE_KMS_KEY_ID=${RAUCLE_KMS_KEY_ID:-}
+      - AWS_REGION=${AWS_REGION:-eu-west-1}
+      - RAUCLE_POLICY_FILE=/etc/raucle/policies.yaml
+      - RAUCLE_RECEIPT_STORE=/data/receipts.jsonl
+      - RAUCLE_AUDIT_CHAIN=/data/audit.jsonl
+      - RAUCLE_COMPLIANCE_FRAMEWORK=${RAUCLE_COMPLIANCE_FRAMEWORK:-eu-ai-act}
+      - RAUCLE_Siem_ENABLED=${RAUCLE_Siem_ENABLED:-false}
+      - RAUCLE_Siem_BACKEND=${RAUCLE_Siem_BACKEND:-}
+      - RAUCLE_Siem_URL=${RAUCLE_Siem_URL:-}
+      - RAUCLE_Siem_TOKEN=${RAUCLE_Siem_TOKEN:-}
+    volumes:
+      - ./policies.yaml:/etc/raucle/policies.yaml:ro
+      - raucle-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  raucle-data:

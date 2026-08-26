@@ -1,0 +1,42 @@
+FROM python:3.12-slim
+
+LABEL org.opencontainers.image.title="Raucle Gateway"
+LABEL org.opencontainers.image.description="Enterprise AI agent governance gateway"
+LABEL org.opencontainers.image.source="https://github.com/craigamcw/raucle"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY raucle/ raucle/
+COPY raucle_detect/ raucle_detect/
+
+# Install raucle with gateway extras
+RUN pip install --no-cache-dir -e ".[dev,compliance,rules]"
+
+# Create data directories
+RUN mkdir -p /data /etc/raucle
+
+# Default config
+ENV RAUCLE_GATEWAY_HOST=0.0.0.0
+ENV RAUCLE_GATEWAY_PORT=8080
+ENV RAUCLE_ADMIN_PORT=8081
+ENV RAUCLE_ADMIN_KEY=changeme
+ENV RAUCLE_SIGNER=local
+ENV RAUCLE_POLICY_FILE=/etc/raucle/policies.yaml
+ENV RAUCLE_RECEIPT_STORE=/data/receipts.jsonl
+ENV RAUCLE_AUDIT_CHAIN=/data/audit.jsonl
+ENV RAUCLE_COMPLIANCE_FRAMEWORK=eu-ai-act
+
+EXPOSE 8080 8081
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
+
+CMD ["python", "-m", "raucle.gateway_app"]

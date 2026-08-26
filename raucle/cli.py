@@ -931,7 +931,7 @@ def _passport_issue(args, _json, ed25519_signer, issue_passport) -> int:
 def _passport_verify(args, agent_passport, verify_passport, trust_registry_cls) -> int:
     try:
         reg = _load_registry(args, trust_registry_cls)
-    except Exception as exc:
+    except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     passport = agent_passport.load(args.passport)
@@ -1079,7 +1079,7 @@ def _registry_revoke(args: argparse.Namespace, _signer) -> int:
 def _registry_list_or_resolve(args: argparse.Namespace, cmd: str, _json, trust_registry_cls) -> int:
     try:
         reg = _load_registry_from_path(args, trust_registry_cls)
-    except Exception as exc:
+    except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     if cmd == "list":

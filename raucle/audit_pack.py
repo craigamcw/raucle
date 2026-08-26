@@ -49,6 +49,7 @@ from .provenance import (
 )
 
 PACK_KIND = "raucle-audit-pack/v1"
+_CHAIN_JSONL = "chain.jsonl"
 INDEX_NAME = "PACK.json"
 
 
@@ -139,7 +140,7 @@ def build_pack(
         dest.write_bytes(data)
         members.append({"path": rel, "role": role, "sha256": _file_hash(dest), **extra})
 
-    _emit("chain.jsonl", validate_path(chain_path).read_bytes(), "receipt-chain")
+    _emit(_CHAIN_JSONL, validate_path(chain_path).read_bytes(), "receipt-chain")
     _emit(
         "manifest.json",
         json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8"),
@@ -311,7 +312,7 @@ def _verify_pack_chain(
     resolved: dict[str, Path], public_keys: dict[str, bytes], reasons: list[str]
 ) -> tuple[bool, int]:
     """Verify the receipt chain against bundled keys. Returns ``(chain_valid, receipt_count)``."""
-    chain_member = resolved.get("chain.jsonl")
+    chain_member = resolved.get(_CHAIN_JSONL)
     if chain_member is not None and public_keys:
         verdict = ProvenanceVerifier(public_keys=public_keys).verify_chain(chain_member)
         if not verdict.valid:
@@ -422,7 +423,7 @@ def verify_pack(pack_dir: str | Path, *, expected_signer: str | None = None) -> 
     public_keys, statements, capabilities, proofs = _load_pack_members(members, resolved)
 
     # 3. Chain verifies against the bundled keys alone.
-    chain_member = resolved.get("chain.jsonl")
+    chain_member = resolved.get(_CHAIN_JSONL)
     chain_valid, receipt_count = _verify_pack_chain(resolved, public_keys, reasons)
 
     # 4. Reproducibility: signed manifest body AND rendered report must follow

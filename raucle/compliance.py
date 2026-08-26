@@ -110,6 +110,26 @@ def _verify_chain_evidence(
         ev.signature_verified = False
 
 
+def _tally_decision_event(event: dict, ev: ChainEvidence, agents: set, tools: set) -> None:
+    """Tally a single decision event."""
+    ev.decisions += 1
+    if event["decision"] == "ALLOW":
+        ev.allow += 1
+    else:
+        ev.deny += 1
+    if event.get("agent_id"):
+        agents.add(event["agent_id"])
+    if event.get("tool"):
+        tools.add(event["tool"])
+
+
+def _tally_scan_event(event: dict, ev: ChainEvidence) -> None:
+    """Tally a single scan-verdict event."""
+    ev.scans += 1
+    if event["verdict"] != "CLEAN":
+        ev.flagged_scans += 1
+
+
 def _tally_chain_events(raw_lines: list[str], ev: ChainEvidence) -> None:
     """Parse each JSONL record and tally events, decisions, and scans."""
     agents: set[str] = set()
@@ -131,19 +151,9 @@ def _tally_chain_events(raw_lines: list[str], ev: ChainEvidence) -> None:
         event = rec.get("event") if isinstance(rec.get("event"), dict) else rec
         ev.total_events += 1
         if "decision" in event:
-            ev.decisions += 1
-            if event["decision"] == "ALLOW":
-                ev.allow += 1
-            else:
-                ev.deny += 1
-            if event.get("agent_id"):
-                agents.add(event["agent_id"])
-            if event.get("tool"):
-                tools.add(event["tool"])
+            _tally_decision_event(event, ev, agents, tools)
         elif "verdict" in event:
-            ev.scans += 1
-            if event["verdict"] != "CLEAN":
-                ev.flagged_scans += 1
+            _tally_scan_event(event, ev)
     ev.distinct_agents = len(agents)
     ev.distinct_tools = len(tools)
 

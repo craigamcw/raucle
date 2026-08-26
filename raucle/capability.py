@@ -1161,6 +1161,26 @@ class CapabilityGate:
         """
         self._revoked.add(token_id)
 
+    def _check_revocation(self, token: Capability) -> GateDecision | None:
+        """Return a DENY decision if the token or its parent is revoked."""
+        if token.token_id in self._revoked:
+            return GateDecision(False, f"token {token.token_id} is revoked", token.token_id)
+        if token.parent_id is not None and token.parent_id in self._revoked:
+            return GateDecision(False, f"parent token {token.parent_id} is revoked", token.token_id)
+        return None
+
+    def _check_agent_id(self, token: Capability, agent_id: str) -> GateDecision | None:
+        """Return a DENY decision if the caller agent_id is invalid."""
+        if not _AGENT_ID_RE.match(agent_id):
+            return GateDecision(False, f"malformed caller agent_id {agent_id!r}", token.token_id)
+        if agent_id != token.agent_id and not agent_id.startswith(token.agent_id + "."):
+            return GateDecision(
+                False,
+                f"agent_id {agent_id!r} does not match token's {token.agent_id!r}",
+                token.token_id,
+            )
+        return None
+
     def check(
         self,
         token: Capability,
@@ -1192,10 +1212,9 @@ class CapabilityGate:
         # 3.5) Revocation denylist (early revocation before expiry).
         # A revoked token, or any child that cites a revoked token as its
         # parent, is refused.
-        if token.token_id in self._revoked:
-            return GateDecision(False, f"token {token.token_id} is revoked", token.token_id)
-        if token.parent_id is not None and token.parent_id in self._revoked:
-            return GateDecision(False, f"parent token {token.parent_id} is revoked", token.token_id)
+        revocation = self._check_revocation(token)
+        if revocation is not None:
+            return revocation
 
         # 4) Time bounds.
         if ts < token.not_before:
@@ -1214,20 +1233,9 @@ class CapabilityGate:
         # required so that 'agent:billing' does NOT authorise 'agent:billing-evil'
         # (a bare prefix check would — CVE-class privilege escalation).
         if agent_id is not None:
-            # Validate the caller-supplied agent_id BEFORE the prefix check. A
-            # malformed id (trailing dot, '..', illegal chars) must not slip
-            # through: 'agent:a..evil' and 'agent:a.' both startswith 'agent:a.'
-            # yet are not valid dot-delimited descendants of 'agent:a'.
-            if not _AGENT_ID_RE.match(agent_id):
-                return GateDecision(
-                    False, f"malformed caller agent_id {agent_id!r}", token.token_id
-                )
-            if agent_id != token.agent_id and not agent_id.startswith(token.agent_id + "."):
-                return GateDecision(
-                    False,
-                    f"agent_id {agent_id!r} does not match token's {token.agent_id!r}",
-                    token.token_id,
-                )
+            agent_decision = self._check_agent_id(token, agent_id)
+            if agent_decision is not None:
+                return agent_decision
 
         # 7) Argument constraints. Fail closed: any unexpected error while
         # evaluating constraints is a DENY, never a propagated exception — the

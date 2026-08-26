@@ -81,6 +81,40 @@ def _run_verify(lang: str, reqs: list[dict]) -> list[dict]:
     return [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
 
 
+def _verify_valid_receipts(ran, valid, valid_reqs) -> bool:
+    """Verify every port accepts all valid receipts with matching ids."""
+    ok = True
+    print("\n=== valid receipts: every port MUST ACCEPT (and match the id) ===")
+    for lang in ran:
+        verdicts = _run_verify(lang, valid_reqs)
+        for v, got in zip(valid, verdicts, strict=True):
+            accept = got.get("verdict") == "ACCEPT"
+            id_ok = got.get("id") == v["expected_receipt_hash"]
+            if not (accept and id_ok):
+                ok = False
+                print(
+                    f"  {lang} {v['name']}: {got} (expected ACCEPT id={v['expected_receipt_hash']})"
+                )
+        print(f"  {lang}: {'ALL-ACCEPT + id-OK' if ok else 'FAILED'}")
+    return ok
+
+
+def _verify_invalid_receipts(ran, invalid, invalid_reqs) -> bool:
+    """Verify every port rejects all invalid receipts."""
+    ok = True
+    print("\n=== invalid receipts: every port MUST REJECT (§6 / R10) ===")
+    for lang in ran:
+        verdicts = _run_verify(lang, invalid_reqs)
+        rejected = all(g.get("verdict") == "REJECT" for g in verdicts)
+        ok = ok and rejected
+        print(f"  {lang}: {'ALL-REJECT' if rejected else 'NOT-REJECTED'}")
+        if not rejected:
+            for v, got in zip(invalid, verdicts, strict=True):
+                if got.get("verdict") != "REJECT":
+                    print(f"      {lang} {v['name']}: ACCEPTED (must reject)")
+    return ok
+
+
 def main() -> int:
     vf = json.loads(VECTORS.read_text())
     # The raw 32-byte Ed25519 public key (hex) — a uniform, PEM-free key format
@@ -101,31 +135,9 @@ def main() -> int:
 
     ran = [name for name, avail in LANGS if avail()]
     print(f"Ports under test: {', '.join(ran)}")
-    ok = True
 
-    print("\n=== valid receipts: every port MUST ACCEPT (and match the id) ===")
-    for lang in ran:
-        verdicts = _run_verify(lang, valid_reqs)
-        for v, got in zip(valid, verdicts, strict=True):
-            accept = got.get("verdict") == "ACCEPT"
-            id_ok = got.get("id") == v["expected_receipt_hash"]
-            if not (accept and id_ok):
-                ok = False
-                print(
-                    f"  {lang} {v['name']}: {got} (expected ACCEPT id={v['expected_receipt_hash']})"
-                )
-        print(f"  {lang}: {'ALL-ACCEPT + id-OK' if ok else 'FAILED'}")
-
-    print("\n=== invalid receipts: every port MUST REJECT (§6 / R10) ===")
-    for lang in ran:
-        verdicts = _run_verify(lang, invalid_reqs)
-        rejected = all(g.get("verdict") == "REJECT" for g in verdicts)
-        ok = ok and rejected
-        print(f"  {lang}: {'ALL-REJECT' if rejected else 'NOT-REJECTED'}")
-        if not rejected:
-            for v, got in zip(invalid, verdicts, strict=True):
-                if got.get("verdict") != "REJECT":
-                    print(f"      {lang} {v['name']}: ACCEPTED (must reject)")
+    ok = _verify_valid_receipts(ran, valid, valid_reqs)
+    ok = _verify_invalid_receipts(ran, invalid, invalid_reqs) and ok
 
     if not ok:
         print("\nRESULT: FAIL — a port mis-verified a receipt")

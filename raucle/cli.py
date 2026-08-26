@@ -1167,7 +1167,8 @@ def _watch_follow(fh, paint, _json, args: argparse.Namespace) -> int:
             if ev is not None and not _watch_is_meta(ev):
                 _watch_render(ev, paint, args)
     except KeyboardInterrupt:
-        return 0
+        pass
+    return 0
     return 0
 
 

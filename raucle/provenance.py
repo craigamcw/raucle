@@ -750,7 +750,7 @@ class ProvenanceReceipt:
         header_bytes = _b64url_decode(header_b64)
         try:
             header_obj = json.loads(header_bytes, object_pairs_hook=_reject_duplicate_keys)
-        except (ValueError, json.JSONDecodeError) as exc:
+        except ValueError as exc:
             raise ValueError(f"malformed JOSE header: {exc}") from exc
         if _canonical_json(header_obj) != header_bytes:
             raise ValueError("JOSE header is not canonical JSON (JCS)")
@@ -840,7 +840,7 @@ class ProvenanceReceipt:
             header = json.loads(
                 _b64url_decode(header_b64), object_pairs_hook=_reject_duplicate_keys
             )
-        except (ValueError, json.JSONDecodeError) as exc:
+        except ValueError as exc:
             raise ValueError(f"malformed JOSE header: {exc}") from exc
         if not isinstance(header, dict):
             raise ValueError("JOSE header must be a JSON object")
@@ -1359,7 +1359,7 @@ class ProvenanceVerifier:
             if extra:
                 raise ValueError(f"unknown envelope field(s): {sorted(extra)}")
             return raw
-        except (json.JSONDecodeError, ValueError, KeyError) as exc:
+        except (ValueError, KeyError) as exc:
             report.errors.append(f"line {line_no}: malformed record: {exc}")
             report.valid = False
             return None
@@ -1464,7 +1464,7 @@ class ProvenanceVerifier:
                     receipt = ProvenanceReceipt.from_jws(
                         raw["jws"], strict=True, validate_structure=False
                     )
-                except (json.JSONDecodeError, ValueError, KeyError) as exc:
+                except (ValueError, KeyError) as exc:
                     report.errors.append(f"line {line_no}: malformed record: {exc}")
                     report.valid = False
                     continue

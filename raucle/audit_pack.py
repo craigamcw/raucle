@@ -224,6 +224,141 @@ class PackVerdict:
     reasons: list[str] = field(default_factory=list)
 
 
+def _verify_pack_integrity(
+    pack: Path, index: dict[str, Any], reasons: list[str]
+) -> tuple[bool, dict[str, Path]]:
+    """Check pack kind, resolve every member safely, verify hashes.
+
+    Returns ``(integrity_ok, resolved_paths)``.
+    """
+    integrity_ok = True
+    if index.get("kind") != PACK_KIND:
+        integrity_ok = False
+        reasons.append(f"unexpected pack kind {index.get('kind')!r}")
+
+    resolved: dict[str, Path] = {}
+    for m in index.get("members", []):
+        safe = _resolve_member(pack, m["path"])
+        if safe is None:
+            integrity_ok = False
+            reasons.append(f"member path escapes the pack: {m['path']!r}")
+            continue
+        if not safe.is_file():
+            integrity_ok = False
+            reasons.append(f"missing member {m['path']}")
+            continue
+        if _file_hash(safe) != m["sha256"]:
+            integrity_ok = False
+            reasons.append(f"hash mismatch for {m['path']} (tampered)")
+            continue
+        resolved[m["path"]] = safe
+    return integrity_ok, resolved
+
+
+def _verify_pack_manifest(
+    resolved: dict[str, Path], index_signer: str | None, reasons: list[str]
+) -> tuple[bool, dict[str, Any], str | None]:
+    """Verify manifest signature and signer agreement.
+
+    Returns ``(manifest_ok, manifest, signer_key_id)``.
+    """
+    manifest_member = resolved.get("manifest.json")
+    signer_key_id = index_signer
+    if manifest_member is None:
+        reasons.append("missing or untrusted manifest.json")
+        return False, {}, signer_key_id
+
+    manifest = json.loads(manifest_member.read_text())
+    manifest_signature_ok = verify_manifest(manifest)
+    if not manifest_signature_ok:
+        reasons.append("manifest signature did not verify")
+    elif manifest.get("signer_key_id") != index_signer:
+        manifest_signature_ok = False
+        reasons.append(
+            f"manifest signer {manifest.get('signer_key_id')!r} does not match "
+            f"index signer {index_signer!r}"
+        )
+    return manifest_signature_ok, manifest, signer_key_id
+
+
+def _load_pack_members(
+    members: list[dict[str, Any]], resolved: dict[str, Path]
+) -> tuple[
+    dict[str, bytes], dict[str, CapabilityStatement], list[dict[str, Any]], list[dict[str, Any]]
+]:
+    """Load bundled public keys, capability statements, tokens, and proofs."""
+    public_keys: dict[str, bytes] = {}
+    statements: dict[str, CapabilityStatement] = {}
+    capabilities: list[dict[str, Any]] = []
+    proofs: list[dict[str, Any]] = []
+    for m in members:
+        safe = resolved.get(m["path"])
+        if safe is None:
+            continue
+        role = m.get("role")
+        if role == "public-key":
+            public_keys[m["key_id"]] = safe.read_bytes()
+        elif role == "capability-statement":
+            statements[m["key_id"]] = CapabilityStatement.from_dict(json.loads(safe.read_text()))
+        elif role == "capability-token":
+            capabilities.append(json.loads(safe.read_text()))
+        elif role == "proof":
+            proofs.append(json.loads(safe.read_text()))
+    return public_keys, statements, capabilities, proofs
+
+
+def _verify_pack_chain(
+    resolved: dict[str, Path], public_keys: dict[str, bytes], reasons: list[str]
+) -> tuple[bool, int]:
+    """Verify the receipt chain against bundled keys. Returns ``(chain_valid, receipt_count)``."""
+    chain_member = resolved.get("chain.jsonl")
+    if chain_member is not None and public_keys:
+        verdict = ProvenanceVerifier(public_keys=public_keys).verify_chain(chain_member)
+        if not verdict.valid:
+            reasons.append("receipt chain did not verify against bundled keys")
+        return verdict.valid, verdict.receipt_count
+    reasons.append("missing/untrusted chain.jsonl or bundled public keys")
+    return False, 0
+
+
+def _verify_pack_reproducibility(
+    resolved: dict[str, Path],
+    manifest: dict[str, Any],
+    chain_member: Path | None,
+    public_keys: dict[str, bytes],
+    proofs: list[dict[str, Any]],
+    capabilities: list[dict[str, Any]],
+    statements: dict[str, CapabilityStatement],
+    index: dict[str, Any],
+    reasons: list[str],
+) -> bool:
+    """Check that the manifest body and report.html are reproducible from the bundle."""
+    if not manifest or chain_member is None or not public_keys:
+        return False
+    try:
+        rebuilt = build_report(
+            chain_member,
+            public_keys,
+            proofs,
+            generated_at=index["generated_at"],
+            capabilities=capabilities,
+            capability_statements=statements or None,
+        )
+        body_ok = _canonical_json(rebuilt.body()) == _canonical_json(manifest["body"])
+        if not body_ok:
+            reasons.append("manifest body is not reproducible from bundled evidence")
+        html_member = resolved.get("report.html")
+        html_ok = html_member is not None and html_member.read_bytes() == render_html(
+            manifest
+        ).encode("utf-8")
+        if not html_ok:
+            reasons.append("report.html does not match the signed manifest")
+        return body_ok and html_ok
+    except (ValueError, OSError, KeyError) as exc:
+        reasons.append(f"reproducibility rebuild failed: {exc}")
+        return False
+
+
 def verify_pack(pack_dir: str | Path, *, expected_signer: str | None = None) -> PackVerdict:
     """Verify an audit pack **fully offline** — no network, no external inputs.
 
@@ -266,53 +401,13 @@ def verify_pack(pack_dir: str | Path, *, expected_signer: str | None = None) -> 
     if not index_signature_ok:
         reasons.append("index (PACK.json) signature did not verify")
 
-    integrity_ok = True
-    if index.get("kind") != PACK_KIND:
-        integrity_ok = False
-        reasons.append(f"unexpected pack kind {index.get('kind')!r}")
-
     # 1. Integrity: resolve each member safely and check its hash.
-    members = index.get("members", [])
-    resolved: dict[str, Path] = {}
-    for m in members:
-        safe = _resolve_member(pack, m["path"])
-        if safe is None:
-            integrity_ok = False
-            reasons.append(f"member path escapes the pack: {m['path']!r}")
-            continue
-        if not safe.is_file():
-            integrity_ok = False
-            reasons.append(f"missing member {m['path']}")
-            continue
-        if _file_hash(safe) != m["sha256"]:
-            integrity_ok = False
-            reasons.append(f"hash mismatch for {m['path']} (tampered)")
-            continue
-        resolved[m["path"]] = safe
-
-    def _safe(rel: str) -> Path | None:
-        return resolved.get(rel)
+    integrity_ok, resolved = _verify_pack_integrity(pack, index, reasons)
 
     # 2. Manifest self-signature (+ optional pinned-signer trust anchor).
-    manifest_signature_ok = False
-    manifest: dict[str, Any] = {}
-    signer_key_id: str | None = None
-    # The custodian id is taken from the SIGNED index; the manifest must agree.
-    signer_key_id = index_signer
-    manifest_member = _safe("manifest.json")
-    if manifest_member is not None:
-        manifest = json.loads(manifest_member.read_text())
-        manifest_signature_ok = verify_manifest(manifest)
-        if not manifest_signature_ok:
-            reasons.append("manifest signature did not verify")
-        elif manifest.get("signer_key_id") != index_signer:
-            manifest_signature_ok = False
-            reasons.append(
-                f"manifest signer {manifest.get('signer_key_id')!r} does not match "
-                f"index signer {index_signer!r}"
-            )
-    else:
-        reasons.append("missing or untrusted manifest.json")
+    manifest_signature_ok, manifest, signer_key_id = _verify_pack_manifest(
+        resolved, index_signer, reasons
+    )
 
     signer_trusted: bool | None = None
     if expected_signer is not None:
@@ -323,62 +418,26 @@ def verify_pack(pack_dir: str | Path, *, expected_signer: str | None = None) -> 
             )
 
     # Reload bundled public keys + capability statements (only verified members).
-    public_keys: dict[str, bytes] = {}
-    statements: dict[str, CapabilityStatement] = {}
-    capabilities: list[dict[str, Any]] = []
-    proofs: list[dict[str, Any]] = []
-    for m in members:
-        safe = _safe(m["path"])
-        if safe is None:
-            continue
-        role = m.get("role")
-        if role == "public-key":
-            public_keys[m["key_id"]] = safe.read_bytes()
-        elif role == "capability-statement":
-            statements[m["key_id"]] = CapabilityStatement.from_dict(json.loads(safe.read_text()))
-        elif role == "capability-token":
-            capabilities.append(json.loads(safe.read_text()))
-        elif role == "proof":
-            proofs.append(json.loads(safe.read_text()))
+    members = index.get("members", [])
+    public_keys, statements, capabilities, proofs = _load_pack_members(members, resolved)
 
     # 3. Chain verifies against the bundled keys alone.
-    chain_member = _safe("chain.jsonl")
-    chain_valid = False
-    receipt_count = 0
-    if chain_member is not None and public_keys:
-        verdict = ProvenanceVerifier(public_keys=public_keys).verify_chain(chain_member)
-        chain_valid = verdict.valid
-        receipt_count = verdict.receipt_count
-        if not chain_valid:
-            reasons.append("receipt chain did not verify against bundled keys")
-    else:
-        reasons.append("missing/untrusted chain.jsonl or bundled public keys")
+    chain_member = resolved.get("chain.jsonl")
+    chain_valid, receipt_count = _verify_pack_chain(resolved, public_keys, reasons)
 
     # 4. Reproducibility: signed manifest body AND rendered report must follow
     #    from the bundled evidence — neither view doctorable independently.
-    reproducible = False
-    if manifest and chain_member is not None and public_keys:
-        try:
-            rebuilt = build_report(
-                chain_member,
-                public_keys,
-                proofs,
-                generated_at=index["generated_at"],
-                capabilities=capabilities,
-                capability_statements=statements or None,
-            )
-            body_ok = _canonical_json(rebuilt.body()) == _canonical_json(manifest["body"])
-            if not body_ok:
-                reasons.append("manifest body is not reproducible from bundled evidence")
-            html_member = _safe("report.html")
-            html_ok = html_member is not None and html_member.read_bytes() == render_html(
-                manifest
-            ).encode("utf-8")
-            if not html_ok:
-                reasons.append("report.html does not match the signed manifest")
-            reproducible = body_ok and html_ok
-        except (ValueError, OSError, KeyError) as exc:
-            reasons.append(f"reproducibility rebuild failed: {exc}")
+    reproducible = _verify_pack_reproducibility(
+        resolved,
+        manifest,
+        chain_member,
+        public_keys,
+        proofs,
+        capabilities,
+        statements,
+        index,
+        reasons,
+    )
 
     ok = (
         index_signature_ok

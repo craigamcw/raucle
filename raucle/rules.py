@@ -43,6 +43,34 @@ _REQUIRED_RULE_FIELDS: set[str] = {"id", "name", "category", "patterns", "score"
 _VALID_SEVERITIES: set[str] = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
 
 
+def _validate_patterns(prefix: str, patterns: Any) -> list[str]:
+    """Validate the ``patterns`` field of a rule."""
+    if not isinstance(patterns, list) or not patterns:
+        return [f"{prefix}: 'patterns' must be a non-empty list"]
+
+    errors: list[str] = []
+    for i, p in enumerate(patterns):
+        if not isinstance(p, str):
+            errors.append(f"{prefix}: patterns[{i}] must be a string")
+            continue
+        try:
+            import re
+
+            re.compile(p)
+        except Exception as exc:
+            errors.append(f"{prefix}: patterns[{i}] invalid regex: {exc}")
+    return errors
+
+
+def _validate_score(prefix: str, score: Any) -> list[str]:
+    """Validate the ``score`` field of a rule."""
+    if score is not None and not isinstance(score, (int, float)):
+        return [f"{prefix}: 'score' must be a number, got {type(score).__name__}"]
+    if score is not None and not (0.0 <= float(score) <= 1.0):
+        return [f"{prefix}: 'score' must be between 0.0 and 1.0, got {score}"]
+    return []
+
+
 def _validate_rule(rule: Any, source: str) -> list[str]:
     """Return a list of validation error strings for *rule*, or empty list if valid."""
     if not isinstance(rule, dict):
@@ -58,25 +86,9 @@ def _validate_rule(rule: Any, source: str) -> list[str]:
 
     patterns = rule.get("patterns")
     if patterns is not None:
-        if not isinstance(patterns, list) or not patterns:
-            errors.append(f"{prefix}: 'patterns' must be a non-empty list")
-        else:
-            for i, p in enumerate(patterns):
-                if not isinstance(p, str):
-                    errors.append(f"{prefix}: patterns[{i}] must be a string")
-                else:
-                    try:
-                        import re
+        errors.extend(_validate_patterns(prefix, patterns))
 
-                        re.compile(p)
-                    except Exception as exc:
-                        errors.append(f"{prefix}: patterns[{i}] invalid regex: {exc}")
-
-    score = rule.get("score")
-    if score is not None and not isinstance(score, (int, float)):
-        errors.append(f"{prefix}: 'score' must be a number, got {type(score).__name__}")
-    elif score is not None and not (0.0 <= float(score) <= 1.0):
-        errors.append(f"{prefix}: 'score' must be between 0.0 and 1.0, got {score}")
+    errors.extend(_validate_score(prefix, rule.get("score")))
 
     severity = rule.get("severity")
     if severity is not None and severity not in _VALID_SEVERITIES:

@@ -197,6 +197,110 @@ class JSONSchemaProver:
 
     timeout_ms: int = 5000
 
+    @staticmethod
+    def _build_z3_vars(
+        z3: Any,
+        schema: dict[str, Any],
+        constraints: list[Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+        """Build Z3 variables for each declared property.
+
+        Returns ``(z3_vars, presence, prop_types)``.
+        """
+        z3_vars: dict[str, Any] = {}
+        presence: dict[str, Any] = {}
+        prop_types: dict[str, str] = {}
+        required = set(schema.get("required", []))
+
+        for name, spec in schema["properties"].items():
+            t = spec.get("type")
+            prop_types[name] = t
+            presence[name] = z3.Bool(f"__present__{name}")
+            if name in required:
+                constraints.append(presence[name])
+            if t == "string":
+                z3_vars[name] = z3.String(name)
+                if "enum" in spec:
+                    enum = spec["enum"]
+                    if not all(isinstance(e, str) for e in enum):
+                        raise UnsupportedGrammar(f"enum on {name} must be all strings")
+                    constraints.append(
+                        z3.Implies(
+                            presence[name],
+                            z3.Or(*[z3_vars[name] == v for v in enum]),
+                        )
+                    )
+            elif t in ("number", "integer"):
+                z3_vars[name] = z3.Real(name) if t == "number" else z3.Int(name)
+                if "minimum" in spec:
+                    constraints.append(z3.Implies(presence[name], z3_vars[name] >= spec["minimum"]))
+                if "maximum" in spec:
+                    constraints.append(z3.Implies(presence[name], z3_vars[name] <= spec["maximum"]))
+            elif t == "boolean":
+                z3_vars[name] = z3.Bool(name)
+            else:
+                raise UnsupportedGrammar(f"unsupported property type {t!r} on {name}")
+        return z3_vars, presence, prop_types
+
+    @staticmethod
+    def _encode_policy_violations(
+        z3: Any,
+        policy: dict[str, Any],
+        z3_vars: dict[str, Any],
+        presence: dict[str, Any],
+        prop_types: dict[str, str],
+        additional_allowed: bool,
+        notes: list[str],
+    ) -> list[Any]:
+        """Encode policy constraints as Z3 violation disjunctions."""
+        violations: list[Any] = []
+
+        for fld, bads in policy.get("forbidden_values", {}).items():
+            if fld not in z3_vars:
+                if not additional_allowed:
+                    notes.append(
+                        f"forbidden_values field {fld!r} not in schema; "
+                        f"additionalProperties:false makes it unreachable"
+                    )
+                    continue
+                z3_vars[fld] = z3.String(fld)
+                presence[fld] = z3.Bool(f"__present__{fld}")
+                prop_types[fld] = "string"
+                notes.append(
+                    f"forbidden_values field {fld!r} not declared but "
+                    f"additionalProperties allows it; modelled as a free field"
+                )
+            elif prop_types.get(fld) != "string":
+                raise UnsupportedGrammar(
+                    f"forbidden_values on non-string field {fld!r} not supported"
+                )
+            for bad in bads:
+                violations.append(z3.And(presence[fld], z3_vars[fld] == bad))
+
+        for fld, bound in policy.get("max_value", {}).items():
+            if fld not in z3_vars or prop_types.get(fld) not in ("number", "integer"):
+                raise UnsupportedGrammar(f"max_value on non-numeric field {fld!r}")
+            violations.append(z3.And(presence[fld], z3_vars[fld] > bound))
+
+        for fld, bound in policy.get("min_value", {}).items():
+            if fld not in z3_vars or prop_types.get(fld) not in ("number", "integer"):
+                raise UnsupportedGrammar(f"min_value on non-numeric field {fld!r}")
+            violations.append(z3.And(presence[fld], z3_vars[fld] < bound))
+
+        for fld in policy.get("required_present", []):
+            if fld not in presence:
+                raise UnsupportedGrammar(f"required_present references unknown field {fld!r}")
+            violations.append(z3.Not(presence[fld]))
+
+        for combo in policy.get("forbidden_field_combinations", []):
+            if not all(c in presence for c in combo):
+                raise UnsupportedGrammar(
+                    f"forbidden_field_combinations references unknown fields: {combo!r}"
+                )
+            violations.append(z3.And(*[presence[c] for c in combo]))
+
+        return violations
+
     def prove(
         self,
         schema: dict[str, Any],
@@ -245,48 +349,12 @@ class JSONSchemaProver:
                 f"(cannot certify a policy whose keys it ignores)"
             )
         # Build Z3 variables per declared property.
-        z3_vars: dict[str, Any] = {}
-        presence: dict[str, Any] = {}
         constraints: list[Any] = []
-        prop_types: dict[str, str] = {}
-
-        required = set(schema.get("required", []))
-
-        for name, spec in schema["properties"].items():
-            t = spec.get("type")
-            prop_types[name] = t
-            # Presence is its own boolean -- absent fields are unconstrained.
-            presence[name] = z3.Bool(f"__present__{name}")
-            if name in required:
-                constraints.append(presence[name])
-            if t == "string":
-                z3_vars[name] = z3.String(name)
-                if "enum" in spec:
-                    enum = spec["enum"]
-                    if not all(isinstance(e, str) for e in enum):
-                        raise UnsupportedGrammar(f"enum on {name} must be all strings")
-                    constraints.append(
-                        z3.Implies(
-                            presence[name],
-                            z3.Or(*[z3_vars[name] == v for v in enum]),
-                        )
-                    )
-            elif t in ("number", "integer"):
-                z3_vars[name] = z3.Real(name) if t == "number" else z3.Int(name)
-                if "minimum" in spec:
-                    constraints.append(z3.Implies(presence[name], z3_vars[name] >= spec["minimum"]))
-                if "maximum" in spec:
-                    constraints.append(z3.Implies(presence[name], z3_vars[name] <= spec["maximum"]))
-            elif t == "boolean":
-                z3_vars[name] = z3.Bool(name)
-            else:
-                raise UnsupportedGrammar(f"unsupported property type {t!r} on {name}")
+        z3_vars, presence, prop_types = self._build_z3_vars(z3, schema, constraints)
 
         # Encode the policy as a *violation* disjunction.  We ask the solver:
         # is there any assignment satisfying the schema that ALSO satisfies the
         # violation?  If unsat, the policy is proven complete.
-        violations: list[Any] = []
-
         # JSON Schema permits undeclared fields unless additionalProperties is
         # explicitly false. A blacklist over a field the schema does not declare
         # is therefore NOT vacuous: an attacker can supply that field with the
@@ -297,53 +365,9 @@ class JSONSchemaProver:
         # violates.)
         additional_allowed = schema.get("additionalProperties", True) is not False
 
-        for fld, bads in policy.get("forbidden_values", {}).items():
-            if fld not in z3_vars:
-                if not additional_allowed:
-                    # Field can never appear (additionalProperties:false), so the
-                    # blacklist is vacuously satisfied — safe to skip.
-                    notes.append(
-                        f"forbidden_values field {fld!r} not in schema; "
-                        f"additionalProperties:false makes it unreachable"
-                    )
-                    continue
-                # Model the attacker-suppliable additional property as a free
-                # string var so the solver can exhibit the violating instance.
-                z3_vars[fld] = z3.String(fld)
-                presence[fld] = z3.Bool(f"__present__{fld}")
-                prop_types[fld] = "string"
-                notes.append(
-                    f"forbidden_values field {fld!r} not declared but "
-                    f"additionalProperties allows it; modelled as a free field"
-                )
-            elif prop_types.get(fld) != "string":
-                raise UnsupportedGrammar(
-                    f"forbidden_values on non-string field {fld!r} not supported"
-                )
-            for bad in bads:
-                violations.append(z3.And(presence[fld], z3_vars[fld] == bad))
-
-        for fld, bound in policy.get("max_value", {}).items():
-            if fld not in z3_vars or prop_types.get(fld) not in ("number", "integer"):
-                raise UnsupportedGrammar(f"max_value on non-numeric field {fld!r}")
-            violations.append(z3.And(presence[fld], z3_vars[fld] > bound))
-
-        for fld, bound in policy.get("min_value", {}).items():
-            if fld not in z3_vars or prop_types.get(fld) not in ("number", "integer"):
-                raise UnsupportedGrammar(f"min_value on non-numeric field {fld!r}")
-            violations.append(z3.And(presence[fld], z3_vars[fld] < bound))
-
-        for fld in policy.get("required_present", []):
-            if fld not in presence:
-                raise UnsupportedGrammar(f"required_present references unknown field {fld!r}")
-            violations.append(z3.Not(presence[fld]))
-
-        for combo in policy.get("forbidden_field_combinations", []):
-            if not all(c in presence for c in combo):
-                raise UnsupportedGrammar(
-                    f"forbidden_field_combinations references unknown fields: {combo!r}"
-                )
-            violations.append(z3.And(*[presence[c] for c in combo]))
+        violations = self._encode_policy_violations(
+            z3, policy, z3_vars, presence, prop_types, additional_allowed, notes
+        )
 
         if not violations:
             notes.append("no policy constraints; trivially proven")
@@ -435,44 +459,31 @@ class URLPolicyProver:
     ``grammar``, the policy holds.  Counterexamples are concrete URLs.
     """
 
-    def prove(self, grammar: dict[str, Any], policy: dict[str, Any]) -> ProofResult:
-        notes: list[str] = []
+    @staticmethod
+    def _check_require_https(
+        policy: dict[str, Any], schemes: list[str], hosts: list[str], path_prefixes: list[str]
+    ) -> list[dict[str, Any]]:
+        """Check require_https: every non-https scheme is a violation."""
         violations: list[dict[str, Any]] = []
-
-        schemes = grammar.get("schemes", [])
-        hosts = grammar.get("hosts", [])
-        path_prefixes = grammar.get("path_prefixes", ["/"])
-        query_keys = grammar.get("query_keys", [])
-
-        if not schemes or not hosts:
-            raise UnsupportedGrammar("grammar must declare non-empty schemes and hosts")
-
-        # §8.1/§8.2 fail-closed: a grammar or policy key this prover does not
-        # model cannot be certified — it may impose an obligation or expand the
-        # URL space we never checked. Downgrade any would-be PROVEN to UNDECIDED
-        # (a REFUTED counterexample below stays valid). Registry-backed so the
-        # drift test pins the modelled surface.
-        unmodelled_url = sorted(_registry.unmodelled_url_keys(set(grammar), set(policy)))
-
-        # require_https
         if policy.get("require_https"):
             for s in schemes:
                 if s != "https":
                     violations.append({"scheme": s, "host": hosts[0], "path": path_prefixes[0]})
+        return violations
 
-        # forbid_query_keys — like max_path_depth, an agent can *append* query
-        # keys to any constructible URL unless the grammar declares its query-key
-        # set is closed/exhaustive (``"query_keys_closed": true``). A declared key
-        # that is forbidden is a concrete REFUTED counterexample; but the absence
-        # of one over an open key set cannot be PROVEN (a forbidden key remains
-        # appendable). So forbid_query_keys over an open grammar is UNDECIDED.
-        undecidable = bool(unmodelled_url)
-        if unmodelled_url:
-            notes.append(
-                f"URL grammar/policy uses key(s) this prover does not model "
-                f"{unmodelled_url}; PROVEN downgraded to UNDECIDED "
-                f"(cannot certify a dimension it does not check)"
-            )
+    @staticmethod
+    def _check_forbid_query_keys(
+        policy: dict[str, Any],
+        grammar: dict[str, Any],
+        query_keys: list[str],
+        schemes: list[str],
+        hosts: list[str],
+        path_prefixes: list[str],
+    ) -> tuple[list[dict[str, Any]], bool, list[str]]:
+        """Check forbid_query_keys. Returns ``(violations, undecidable, notes)``."""
+        violations: list[dict[str, Any]] = []
+        notes: list[str] = []
+        undecidable = False
         forbidden_q = set(policy.get("forbid_query_keys", []))
         for q in query_keys:
             if q in forbidden_q:
@@ -491,21 +502,29 @@ class URLPolicyProver:
                 "an agent may append a forbidden key to any URL. Declare "
                 "'query_keys_closed': true to assert the key set is exhaustive (UNDECIDED)"
             )
+        return violations, undecidable, notes
 
-        # host_allowlist: every grammar host must be permitted by some allowlist entry
+    @staticmethod
+    def _check_host_allowlist(
+        policy: dict[str, Any], hosts: list[str], schemes: list[str], path_prefixes: list[str]
+    ) -> list[dict[str, Any]]:
+        """Check host_allowlist: every grammar host must be permitted."""
+        violations: list[dict[str, Any]] = []
         allowlist = policy.get("host_allowlist")
         if allowlist is not None:
             for h in hosts:
                 if not any(_host_matches(h, a) for a in allowlist):
                     violations.append({"scheme": schemes[0], "host": h, "path": path_prefixes[0]})
+        return violations
 
-        # max_path_depth — the grammar declares path *prefixes*, and an agent
-        # can append further segments to any prefix, so the constructible path
-        # depth is unbounded. A declared prefix already exceeding the bound is a
-        # concrete REFUTED counterexample; but the *absence* of such a prefix
-        # cannot be PROVEN (deeper paths are still constructible). So a
-        # max_path_depth obligation with no in-prefix violation is UNDECIDED,
-        # never PROVEN.
+    @staticmethod
+    def _check_max_path_depth(
+        policy: dict[str, Any], path_prefixes: list[str], schemes: list[str], hosts: list[str]
+    ) -> tuple[list[dict[str, Any]], bool, list[str]]:
+        """Check max_path_depth. Returns ``(violations, undecidable, notes)``."""
+        violations: list[dict[str, Any]] = []
+        notes: list[str] = []
+        undecidable = False
         max_depth = policy.get("max_path_depth")
         if max_depth is not None:
             depth_violation = False
@@ -521,6 +540,55 @@ class URLPolicyProver:
                     "max_path_depth cannot be PROVEN over a prefix grammar: an agent may append "
                     "segments to any prefix, so deeper paths remain constructible (UNDECIDED)"
                 )
+        return violations, undecidable, notes
+
+    def prove(self, grammar: dict[str, Any], policy: dict[str, Any]) -> ProofResult:
+        notes: list[str] = []
+        violations: list[dict[str, Any]] = []
+
+        schemes = grammar.get("schemes", [])
+        hosts = grammar.get("hosts", [])
+        path_prefixes = grammar.get("path_prefixes", ["/"])
+        query_keys = grammar.get("query_keys", [])
+
+        if not schemes or not hosts:
+            raise UnsupportedGrammar("grammar must declare non-empty schemes and hosts")
+
+        # §8.1/§8.2 fail-closed: a grammar or policy key this prover does not
+        # model cannot be certified — it may impose an obligation or expand the
+        # URL space we never checked. Downgrade any would-be PROVEN to UNDECIDED
+        # (a REFUTED counterexample below stays valid). Registry-backed so the
+        # drift test pins the modelled surface.
+        unmodelled_url = sorted(_registry.unmodelled_url_keys(set(grammar), set(policy)))
+        undecidable = bool(unmodelled_url)
+        if unmodelled_url:
+            notes.append(
+                f"URL grammar/policy uses key(s) this prover does not model "
+                f"{unmodelled_url}; PROVEN downgraded to UNDECIDED "
+                f"(cannot certify a dimension it does not check)"
+            )
+
+        # require_https
+        violations.extend(self._check_require_https(policy, schemes, hosts, path_prefixes))
+
+        # forbid_query_keys
+        q_violations, q_undecidable, q_notes = self._check_forbid_query_keys(
+            policy, grammar, query_keys, schemes, hosts, path_prefixes
+        )
+        violations.extend(q_violations)
+        undecidable = undecidable or q_undecidable
+        notes.extend(q_notes)
+
+        # host_allowlist
+        violations.extend(self._check_host_allowlist(policy, hosts, schemes, path_prefixes))
+
+        # max_path_depth
+        d_violations, d_undecidable, d_notes = self._check_max_path_depth(
+            policy, path_prefixes, schemes, hosts
+        )
+        violations.extend(d_violations)
+        undecidable = undecidable or d_undecidable
+        notes.extend(d_notes)
 
         if violations:
             status = "REFUTED"
@@ -646,6 +714,92 @@ class SQLClauseProver:
     Counterexamples are the offending template plus the rule that broke.
     """
 
+    @staticmethod
+    def _extract_table_refs(upper: str, tmpl: str, notes: list[str]) -> tuple[list[str], bool]:
+        """Extract table references from FROM/JOIN clauses.
+
+        Returns ``(table_refs, undecidable)``.
+        """
+        clause_re = re.compile(
+            r"(?:FROM|JOIN)\s+(.+?)"
+            r"(?=\s+(?:WHERE|GROUP|ORDER|HAVING|LIMIT|UNION|EXCEPT"
+            r"|INTERSECT|MINUS|JOIN|ON|USING|FOR)\b|;|$)",
+            re.DOTALL,
+        )
+        table_refs: list[str] = []
+        undecidable = False
+        for clause in clause_re.findall(upper):
+            for piece in clause.split(","):
+                piece = piece.strip()
+                if not piece:
+                    continue
+                if "(" in piece:
+                    undecidable = True
+                    notes.append(f"unparsable table reference in {tmpl!r} (UNDECIDED)")
+                    continue
+                m = re.match(r"([A-Z_][A-Z0-9_]*(?:\.[A-Z_][A-Z0-9_]*)*)", piece)
+                if m:
+                    table_refs.append(m.group(1))
+                else:
+                    undecidable = True
+                    notes.append(f"unparsable table reference in {tmpl!r} (UNDECIDED)")
+        return table_refs, undecidable
+
+    @staticmethod
+    def _check_sql_template(
+        tmpl: str,
+        forbidden: set[str],
+        allow_chain: bool,
+        allowed_tables: set[str],
+        notes: list[str],
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Check one SQL template against the policy.
+
+        Returns ``(counterexample, undecidable)``.
+        """
+        upper = tmpl.upper()
+
+        # Forbidden tokens
+        tokens = re.findall(r"[A-Z_][A-Z_0-9]*", upper)
+        for tok in tokens:
+            if tok in forbidden:
+                return {"template": tmpl, "violation": f"forbidden token {tok}"}, False
+
+        # Statement chaining
+        if not allow_chain and _STATEMENT_CHAIN_RE.search(tmpl):
+            return {"template": tmpl, "violation": "statement chaining via ';'"}, False
+
+        # §8.4: unmodelled SQL constructs → UNDECIDED
+        if _UNMODELLED_SQL_RE.search(tmpl):
+            notes.append(
+                f"unmodelled SQL construct in {tmpl!r} (quoted identifier / "
+                f"LATERAL / UNNEST / VALUES / recursive CTE / dialect form); "
+                f"completeness not verifiable (UNDECIDED)"
+            )
+            return None, True
+
+        if not allowed_tables:
+            return None, False
+
+        # The FROM/JOIN extractor is only SOUND for plain SELECT queries.
+        if not re.match(r"\s*(WITH\b|SELECT\b)", upper) or re.search(
+            r"\b(COPY|INTO|MERGE)\b", upper
+        ):
+            notes.append(
+                f"table-bearing statement form in {tmpl!r} not covered by the "
+                f"FROM/JOIN extractor; table isolation not verifiable (UNDECIDED)"
+            )
+            return None, True
+
+        table_refs, tbl_undecidable = SQLClauseProver._extract_table_refs(upper, tmpl, notes)
+        for ref in table_refs:
+            if ref.lower() not in allowed_tables:
+                return (
+                    {"template": tmpl, "violation": f"table {ref!r} not in allowed_tables"},
+                    tbl_undecidable,
+                )
+        return None, tbl_undecidable
+
     def prove(self, grammar: dict[str, Any], policy: dict[str, Any]) -> ProofResult:
         templates = grammar.get("templates")
         if not templates:
@@ -680,94 +834,12 @@ class SQLClauseProver:
             )
 
         for tmpl in templates:
-            upper = tmpl.upper()
-            tokens = re.findall(r"[A-Z_][A-Z_0-9]*", upper)
-            for tok in tokens:
-                if tok in forbidden:
-                    counter = {"template": tmpl, "violation": f"forbidden token {tok}"}
-                    break
+            counter, tmpl_undecidable = self._check_sql_template(
+                tmpl, forbidden, allow_chain, allowed_tables, notes
+            )
+            undecidable = undecidable or tmpl_undecidable
             if counter:
                 break
-
-            if not allow_chain and _STATEMENT_CHAIN_RE.search(tmpl):
-                counter = {"template": tmpl, "violation": "statement chaining via ';'"}
-                break
-
-            # §8.4: SQL constructs the regex extractor cannot model soundly →
-            # UNDECIDED, UNCONDITIONALLY (not only when allowed_tables is set).
-            # Without this guard a query like `SELECT * FROM UNNEST(xs)` or one
-            # using quoted identifiers / recursive CTEs would return PROVEN even
-            # though the prover does not actually understand it.
-            if _UNMODELLED_SQL_RE.search(tmpl):
-                undecidable = True
-                notes.append(
-                    f"unmodelled SQL construct in {tmpl!r} (quoted identifier / "
-                    f"LATERAL / UNNEST / VALUES / recursive CTE / dialect form); "
-                    f"completeness not verifiable (UNDECIDED)"
-                )
-                continue
-
-            if allowed_tables:
-                # The FROM/JOIN extractor is only SOUND for plain SELECT queries.
-                # Other table-bearing forms reference tables without a FROM/JOIN
-                # (COPY ... TO, SELECT ... INTO, MERGE INTO), so we cannot verify
-                # table isolation by scanning FROM/JOIN — mark UNDECIDED rather
-                # than emit a false PROVEN (round-6 F2). (These are also forbidden
-                # under the default token list; this guard holds even when a
-                # caller overrides forbidden_tokens to be permissive.)
-                if not re.match(r"\s*(WITH\b|SELECT\b)", upper) or re.search(
-                    r"\b(COPY|INTO|MERGE)\b", upper
-                ):
-                    undecidable = True
-                    notes.append(
-                        f"table-bearing statement form in {tmpl!r} not covered by the "
-                        f"FROM/JOIN extractor; table isolation not verifiable (UNDECIDED)"
-                    )
-                    continue
-                # Extract every table referenced after a FROM/JOIN, including
-                # comma-separated lists (a bare `FROM a, b` join). Capture the
-                # whole clause up to the next SQL keyword, split on commas, and
-                # take the leading identifier of each piece (dropping aliases).
-                clause_re = re.compile(
-                    r"(?:FROM|JOIN)\s+(.+?)"
-                    r"(?=\s+(?:WHERE|GROUP|ORDER|HAVING|LIMIT|UNION|EXCEPT"
-                    r"|INTERSECT|MINUS|JOIN|ON|USING|FOR)\b|;|$)",
-                    re.DOTALL,
-                )
-                table_refs: list[str] = []
-                for clause in clause_re.findall(upper):
-                    for piece in clause.split(","):
-                        piece = piece.strip()
-                        if not piece:
-                            continue
-                        if "(" in piece:
-                            # subquery / derived table / table function — the
-                            # crude extractor cannot statically resolve a paren
-                            # anywhere in the reference (leading "(subquery)" OR
-                            # a table function like func(arg)); refuse PROVEN.
-                            undecidable = True
-                            notes.append(f"unparsable table reference in {tmpl!r} (UNDECIDED)")
-                            continue
-                        # Capture the FULL dotted/qualified name (e.g.
-                        # schema.table), not just the leading identifier — else
-                        # `FROM public.secret` would be checked as table
-                        # `public` and pass an allowlist of ['public'] while
-                        # actually reading `public.secret` (soundness bug).
-                        m = re.match(r"([A-Z_][A-Z0-9_]*(?:\.[A-Z_][A-Z0-9_]*)*)", piece)
-                        if m:
-                            table_refs.append(m.group(1))
-                        else:
-                            undecidable = True
-                            notes.append(f"unparsable table reference in {tmpl!r} (UNDECIDED)")
-                for ref in table_refs:
-                    if ref.lower() not in allowed_tables:
-                        counter = {
-                            "template": tmpl,
-                            "violation": f"table {ref!r} not in allowed_tables",
-                        }
-                        break
-                if counter:
-                    break
 
         if counter is not None:
             status = "REFUTED"

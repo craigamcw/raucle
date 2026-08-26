@@ -729,6 +729,34 @@ class ProvenanceReceipt:
     MAX_PAYLOAD_BYTES = 32 * 1024
 
     @classmethod
+    def _enforce_strict_payload(
+        cls, header_b64: str, payload: dict[str, Any], payload_bytes: bytes
+    ) -> None:
+        """Enforce strict-mode payload and header checks (spec v1 §4.2/§4.3)."""
+        cls._enforce_header(header_b64, expected_kid=payload.get("agent_key_id"))
+        # Spec v1 §4.2: the payload typ is a fixed literal and iss must be a
+        # non-empty issuer identifier. (The header typ is enforced in
+        # _enforce_header; the payload carries its own typ that MUST agree.)
+        if payload.get("typ") != _EXPECTED_TYP:
+            raise ValueError(f"payload typ {payload.get('typ')!r} must be {_EXPECTED_TYP!r}")
+        if not isinstance(payload.get("iss"), str) or not payload.get("iss"):
+            raise ValueError("payload missing required non-empty 'iss'")
+        # Spec v1 §4.3: header and payload are JCS-canonical (sorted keys, no
+        # insignificant whitespace). The signature binds the on-wire bytes,
+        # but without this a non-canonical encoding (spaces / unsorted keys)
+        # would still verify, breaking the canonical contract and admitting
+        # byte-different receipts for the same logical content (round-5 F3).
+        header_bytes = _b64url_decode(header_b64)
+        try:
+            header_obj = json.loads(header_bytes, object_pairs_hook=_reject_duplicate_keys)
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(f"malformed JOSE header: {exc}") from exc
+        if _canonical_json(header_obj) != header_bytes:
+            raise ValueError("JOSE header is not canonical JSON (JCS)")
+        if _canonical_json(payload) != payload_bytes:
+            raise ValueError("JWS payload is not canonical JSON (JCS)")
+
+    @classmethod
     def from_jws(
         cls, jws: str, *, strict: bool = False, validate_structure: bool = True
     ) -> ProvenanceReceipt:
@@ -765,28 +793,7 @@ class ProvenanceReceipt:
         payload = json.loads(payload_bytes, object_pairs_hook=_reject_duplicate_keys)
 
         if strict:
-            cls._enforce_header(header_b64, expected_kid=payload.get("agent_key_id"))
-            # Spec v1 §4.2: the payload typ is a fixed literal and iss must be a
-            # non-empty issuer identifier. (The header typ is enforced in
-            # _enforce_header; the payload carries its own typ that MUST agree.)
-            if payload.get("typ") != _EXPECTED_TYP:
-                raise ValueError(f"payload typ {payload.get('typ')!r} must be {_EXPECTED_TYP!r}")
-            if not isinstance(payload.get("iss"), str) or not payload.get("iss"):
-                raise ValueError("payload missing required non-empty 'iss'")
-            # Spec v1 §4.3: header and payload are JCS-canonical (sorted keys, no
-            # insignificant whitespace). The signature binds the on-wire bytes,
-            # but without this a non-canonical encoding (spaces / unsorted keys)
-            # would still verify, breaking the canonical contract and admitting
-            # byte-different receipts for the same logical content (round-5 F3).
-            header_bytes = _b64url_decode(header_b64)
-            try:
-                header_obj = json.loads(header_bytes, object_pairs_hook=_reject_duplicate_keys)
-            except (ValueError, json.JSONDecodeError) as exc:
-                raise ValueError(f"malformed JOSE header: {exc}") from exc
-            if _canonical_json(header_obj) != header_bytes:
-                raise ValueError("JOSE header is not canonical JSON (JCS)")
-            if _canonical_json(payload) != payload_bytes:
-                raise ValueError("JWS payload is not canonical JSON (JCS)")
+            cls._enforce_strict_payload(header_b64, payload, payload_bytes)
 
         receipt = cls(
             agent_id=payload["agent_id"],
@@ -1331,6 +1338,108 @@ class ProvenanceVerifier:
         }
         self._caps: dict[str, CapabilityStatement] = dict(capabilities or {})
 
+    @staticmethod
+    def _parse_chain_line(
+        line: str, line_no: int, report: VerificationReport
+    ) -> dict[str, Any] | None:
+        """Parse one JSONL envelope line. Returns the raw envelope dict or None on error."""
+        try:
+            # Reject duplicate keys in the JSONL envelope wrapper too —
+            # not just the inner JWS payload. A wrapper like
+            # {"jws": <evil>, "jws": <good>, "receipt_hash": ...} would
+            # otherwise let two parsers disagree on which receipt the
+            # line carries (envelope smuggling, §8.10 #3).
+            raw = json.loads(line, object_pairs_hook=_reject_duplicate_keys)
+            # §8.1 envelope dimension: the wrapper carries exactly
+            # {receipt_hash, jws}. Reject any other top-level field
+            # (unless a registered x-raucle- versioned extension) — an
+            # unknown field is envelope malleability we never validate.
+            extra = _registry.unknown_envelope_fields(set(raw))
+            if extra:
+                raise ValueError(f"unknown envelope field(s): {sorted(extra)}")
+            return raw
+        except (json.JSONDecodeError, ValueError, KeyError) as exc:
+            report.errors.append(f"line {line_no}: malformed record: {exc}")
+            report.valid = False
+            return None
+
+    def _verify_capability_conformance(
+        self, receipt: ProvenanceReceipt, line_no: int, report: VerificationReport
+    ) -> None:
+        """Check capability conformance for a receipt (when statements supplied)."""
+        if not self._caps:
+            return
+        stmt = self._caps.get(receipt.agent_key_id)
+        if stmt is None:
+            report.capability_violations += 1
+            report.errors.append(
+                f"line {line_no}: no capability statement supplied for "
+                f"agent_key_id={receipt.agent_key_id} — unknown key rejected"
+            )
+            report.valid = False
+            return
+        if not self._verify_statement(stmt, receipt.agent_key_id):
+            report.capability_violations += 1
+            report.errors.append(
+                f"line {line_no}: capability statement for "
+                f"{receipt.agent_key_id} failed signature/key-binding verification"
+            )
+            report.valid = False
+            return
+        # Identity binding: the receipt's agent_id must be the
+        # identity the capability statement (and thus the key)
+        # speaks for. (round-3 #5 identity spoof).
+        if receipt.agent_id != stmt.agent_id:
+            report.capability_violations += 1
+            report.errors.append(
+                f"line {line_no}: receipt agent_id {receipt.agent_id!r} does not "
+                f"match capability statement agent_id {stmt.agent_id!r} for "
+                f"{receipt.agent_key_id}"
+            )
+            report.valid = False
+        # Expiry: an expired capability statement must not
+        # authorize receipts issued at/after it expired (round-3 #4).
+        if (
+            stmt.expires_at is not None
+            and receipt.issued_at
+            and receipt.issued_at >= stmt.expires_at
+        ):
+            report.capability_violations += 1
+            report.errors.append(
+                f"line {line_no}: capability statement for {receipt.agent_key_id} "
+                f"expired at {stmt.expires_at} but receipt issued at "
+                f"{receipt.issued_at}"
+            )
+            report.valid = False
+        if receipt.model and not stmt.permits_model(receipt.model):
+            report.capability_violations += 1
+            report.errors.append(
+                f"line {line_no}: model {receipt.model!r} not permitted by "
+                f"capability statement for {receipt.agent_key_id}"
+            )
+            report.valid = False
+        if receipt.tool and not stmt.permits_tool(receipt.tool):
+            report.capability_violations += 1
+            report.errors.append(
+                f"line {line_no}: tool {receipt.tool!r} not permitted by "
+                f"capability statement for {receipt.agent_key_id}"
+            )
+            report.valid = False
+
+    def _verify_dag_and_taint(
+        self,
+        receipts_by_hash: dict[str, ProvenanceReceipt],
+        report: VerificationReport,
+    ) -> None:
+        """Second pass: DAG integrity + taint monotonicity."""
+        for h, receipt in receipts_by_hash.items():
+            for parent_hash in receipt.parents:
+                if parent_hash not in receipts_by_hash:
+                    report.parent_link_failures += 1
+                    report.errors.append(f"receipt {h}: parent {parent_hash} not found in chain")
+                    report.valid = False
+            self._check_taint(receipt, receipts_by_hash, report)
+
     def verify_chain(self, path: str | Path) -> VerificationReport:
         """Verify a JSONL chain file."""
         receipts_by_hash: dict[str, ProvenanceReceipt] = {}
@@ -1341,20 +1450,12 @@ class ProvenanceVerifier:
                 line = line.strip()
                 if not line:
                     continue
+
+                raw = self._parse_chain_line(line, line_no, report)
+                if raw is None:
+                    continue
+
                 try:
-                    # Reject duplicate keys in the JSONL envelope wrapper too —
-                    # not just the inner JWS payload. A wrapper like
-                    # {"jws": <evil>, "jws": <good>, "receipt_hash": ...} would
-                    # otherwise let two parsers disagree on which receipt the
-                    # line carries (envelope smuggling, §8.10 #3).
-                    raw = json.loads(line, object_pairs_hook=_reject_duplicate_keys)
-                    # §8.1 envelope dimension: the wrapper carries exactly
-                    # {receipt_hash, jws}. Reject any other top-level field
-                    # (unless a registered x-raucle- versioned extension) — an
-                    # unknown field is envelope malleability we never validate.
-                    extra = _registry.unknown_envelope_fields(set(raw))
-                    if extra:
-                        raise ValueError(f"unknown envelope field(s): {sorted(extra)}")
                     # With validate_structure disabled: the chain verifier reports each
                     # structural error per-line below (via _structural_errors)
                     # rather than raising on the first, so callers see the full
@@ -1390,89 +1491,13 @@ class ProvenanceVerifier:
                     report.valid = False
 
                 # Capability conformance (verifier-side, when statements supplied)
-                if self._caps:
-                    stmt = self._caps.get(receipt.agent_key_id)
-                    if stmt is None:
-                        # PROV-CAP-OPEN: a receipt signed by a key with no
-                        # capability statement in the supplied map is NOT
-                        # silently trusted. Once the caller opts into
-                        # capability enforcement, every key must be known.
-                        report.capability_violations += 1
-                        report.errors.append(
-                            f"line {line_no}: no capability statement supplied for "
-                            f"agent_key_id={receipt.agent_key_id} — unknown key rejected"
-                        )
-                        report.valid = False
-                    elif not self._verify_statement(stmt, receipt.agent_key_id):
-                        # Authenticity: a supplied capability statement is only
-                        # trusted if its self-signature verifies under the key the
-                        # verifier holds out-of-band for this agent. Without this
-                        # a forged statement (bogus signature, or widened
-                        # allowed_tools/models signed by an attacker key) would be
-                        # trusted and authorise tools the agent was never granted
-                        # (round-4 F2). Reject and do NOT consult its allowlists.
-                        report.capability_violations += 1
-                        report.errors.append(
-                            f"line {line_no}: capability statement for "
-                            f"{receipt.agent_key_id} failed signature/key-binding verification"
-                        )
-                        report.valid = False
-                    else:
-                        # Identity binding: the receipt's agent_id must be the
-                        # identity the capability statement (and thus the key)
-                        # speaks for. Without this, any holder of an enrolled
-                        # key can sign a receipt claiming a different, trusted
-                        # agent_id and it verifies (round-3 #5 identity spoof).
-                        if receipt.agent_id != stmt.agent_id:
-                            report.capability_violations += 1
-                            report.errors.append(
-                                f"line {line_no}: receipt agent_id {receipt.agent_id!r} does not "
-                                f"match capability statement agent_id {stmt.agent_id!r} for "
-                                f"{receipt.agent_key_id}"
-                            )
-                            report.valid = False
-                        # Expiry: an expired capability statement must not
-                        # authorize receipts issued at/after it expired
-                        # (round-3 #4 — expires_at was never consulted).
-                        if (
-                            stmt.expires_at is not None
-                            and receipt.issued_at
-                            and receipt.issued_at >= stmt.expires_at
-                        ):
-                            report.capability_violations += 1
-                            report.errors.append(
-                                f"line {line_no}: capability statement for {receipt.agent_key_id} "
-                                f"expired at {stmt.expires_at} but receipt issued at "
-                                f"{receipt.issued_at}"
-                            )
-                            report.valid = False
-                        if receipt.model and not stmt.permits_model(receipt.model):
-                            report.capability_violations += 1
-                            report.errors.append(
-                                f"line {line_no}: model {receipt.model!r} not permitted by "
-                                f"capability statement for {receipt.agent_key_id}"
-                            )
-                            report.valid = False
-                        if receipt.tool and not stmt.permits_tool(receipt.tool):
-                            report.capability_violations += 1
-                            report.errors.append(
-                                f"line {line_no}: tool {receipt.tool!r} not permitted by "
-                                f"capability statement for {receipt.agent_key_id}"
-                            )
-                            report.valid = False
+                self._verify_capability_conformance(receipt, line_no, report)
 
                 receipts_by_hash[receipt.receipt_hash] = receipt
                 report.receipt_count += 1
 
         # Second pass: DAG integrity + taint monotonicity
-        for h, receipt in receipts_by_hash.items():
-            for parent_hash in receipt.parents:
-                if parent_hash not in receipts_by_hash:
-                    report.parent_link_failures += 1
-                    report.errors.append(f"receipt {h}: parent {parent_hash} not found in chain")
-                    report.valid = False
-
-            self._check_taint(receipt, receipts_by_hash, report)
+        self._verify_dag_and_taint(receipts_by_hash, report)
 
         return report
 
@@ -1573,6 +1598,68 @@ class ProvenanceVerifier:
         except Exception:
             return False
 
+    def _check_sanitisation_taint(
+        self,
+        receipt: ProvenanceReceipt,
+        inherited: set[str],
+        my_taint: set[str],
+        report: VerificationReport,
+    ) -> None:
+        """Check taint rules for a SANITISATION receipt."""
+        # Sanitisation may remove specific tags listed in `corpus` field.
+        removed: set[str] = set()
+        if receipt.corpus.startswith(_REMOVED_PREFIX):
+            removed = set(filter(None, receipt.corpus[len(_REMOVED_PREFIX) :].split(",")))
+
+        # TAINT-LAUNDER: a SANITISATION receipt is only as trustworthy as
+        # the authority granted to the signing key. When capability
+        # statements are supplied, the issuing agent may only clear tags
+        # named in its `sanitisation_authority`; anything else is an
+        # unauthorised taint-laundering attempt. Without a capabilities
+        # map we cannot check this (the `corpus="removed:..."` claim is
+        # self-asserted and trusted — documented trust assumption).
+        if self._caps:
+            stmt = self._caps.get(receipt.agent_key_id)
+            # A missing statement is already flagged as a capability
+            # violation in the first pass; treat it as authorising nothing.
+            unauthorised = {
+                tag for tag in removed if stmt is None or not stmt.permits_sanitising(tag)
+            }
+            if unauthorised:
+                report.unauthorised_sanitisations += 1
+                report.errors.append(
+                    f"receipt {receipt.receipt_hash}: agent {receipt.agent_key_id} "
+                    f"cleared taint tag(s) {sorted(unauthorised)} without "
+                    f"sanitisation_authority — unauthorised taint laundering"
+                )
+                report.valid = False
+
+        expected = inherited - removed
+        if my_taint != expected:
+            report.taint_monotonicity_failures += 1
+            report.errors.append(
+                f"receipt {receipt.receipt_hash}: sanitisation taint mismatch "
+                f"(expected {sorted(expected)}, got {sorted(my_taint)})"
+            )
+            report.valid = False
+
+    @staticmethod
+    def _check_monotonic_taint(
+        receipt: ProvenanceReceipt,
+        inherited: set[str],
+        my_taint: set[str],
+        report: VerificationReport,
+    ) -> None:
+        """Check taint monotonicity for a non-SANITISATION receipt."""
+        missing = inherited - my_taint
+        if missing:
+            report.taint_monotonicity_failures += 1
+            report.errors.append(
+                f"receipt {receipt.receipt_hash}: taint not monotonic — "
+                f"dropped {sorted(missing)} without a sanitisation step"
+            )
+            report.valid = False
+
     def _check_taint(
         self,
         receipt: ProvenanceReceipt,
@@ -1590,51 +1677,9 @@ class ProvenanceVerifier:
 
         my_taint = set(receipt.taint)
         if receipt.operation == Operation.SANITISATION:
-            # Sanitisation may remove specific tags listed in `corpus` field.
-            removed = set()
-            if receipt.corpus.startswith(_REMOVED_PREFIX):
-                removed = set(filter(None, receipt.corpus[len(_REMOVED_PREFIX) :].split(",")))
-
-            # TAINT-LAUNDER: a SANITISATION receipt is only as trustworthy as
-            # the authority granted to the signing key. When capability
-            # statements are supplied, the issuing agent may only clear tags
-            # named in its `sanitisation_authority`; anything else is an
-            # unauthorised taint-laundering attempt. Without a capabilities
-            # map we cannot check this (the `corpus="removed:..."` claim is
-            # self-asserted and trusted — documented trust assumption).
-            if self._caps:
-                stmt = self._caps.get(receipt.agent_key_id)
-                # A missing statement is already flagged as a capability
-                # violation in the first pass; treat it as authorising nothing.
-                unauthorised = {
-                    tag for tag in removed if stmt is None or not stmt.permits_sanitising(tag)
-                }
-                if unauthorised:
-                    report.unauthorised_sanitisations += 1
-                    report.errors.append(
-                        f"receipt {receipt.receipt_hash}: agent {receipt.agent_key_id} "
-                        f"cleared taint tag(s) {sorted(unauthorised)} without "
-                        f"sanitisation_authority — unauthorised taint laundering"
-                    )
-                    report.valid = False
-
-            expected = inherited - removed
-            if my_taint != expected:
-                report.taint_monotonicity_failures += 1
-                report.errors.append(
-                    f"receipt {receipt.receipt_hash}: sanitisation taint mismatch "
-                    f"(expected {sorted(expected)}, got {sorted(my_taint)})"
-                )
-                report.valid = False
+            self._check_sanitisation_taint(receipt, inherited, my_taint, report)
         else:
-            missing = inherited - my_taint
-            if missing:
-                report.taint_monotonicity_failures += 1
-                report.errors.append(
-                    f"receipt {receipt.receipt_hash}: taint not monotonic — "
-                    f"dropped {sorted(missing)} without a sanitisation step"
-                )
-                report.valid = False
+            self._check_monotonic_taint(receipt, inherited, my_taint, report)
 
     def _load_all(self, path: str | Path) -> dict[str, ProvenanceReceipt]:
         out: dict[str, ProvenanceReceipt] = {}

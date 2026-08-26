@@ -309,28 +309,34 @@ class RuleFuzzer:
 
         for rule_id, seeds in self._seed_map.items():
             for seed in seeds:
-                for strategy in self._strategies:
-                    mutator_fn = _MUTATORS[strategy]
-                    for _ in range(self._samples_per_seed):
-                        try:
-                            mutated = mutator_fn(seed)
-                        except Exception as exc:
-                            logger.debug("mutation strategy %s failed on seed: %s", strategy, exc)
-                            continue
-                        result = self._scanner.scan(mutated)
-                        detected = result.injection_detected or (rule_id in result.matched_rules)
-                        all_results.append(
-                            MutationResult(
-                                rule_id=rule_id,
-                                strategy=strategy,
-                                original_prompt=seed,
-                                mutated_prompt=mutated,
-                                detected=detected,
-                                scan_result=result,
-                            )
-                        )
+                all_results.extend(self._fuzz_seed(rule_id, seed))
 
         return self._build_report(all_results)
+
+    def _fuzz_seed(self, rule_id: str, seed: str) -> list[MutationResult]:
+        """Generate and scan all mutations for a single seed phrase."""
+        results: list[MutationResult] = []
+        for strategy in self._strategies:
+            mutator_fn = _MUTATORS[strategy]
+            for _ in range(self._samples_per_seed):
+                try:
+                    mutated = mutator_fn(seed)
+                except Exception as exc:
+                    logger.debug("mutation strategy %s failed on seed: %s", strategy, exc)
+                    continue
+                result = self._scanner.scan(mutated)
+                detected = result.injection_detected or (rule_id in result.matched_rules)
+                results.append(
+                    MutationResult(
+                        rule_id=rule_id,
+                        strategy=strategy,
+                        original_prompt=seed,
+                        mutated_prompt=mutated,
+                        detected=detected,
+                        scan_result=result,
+                    )
+                )
+        return results
 
     def _build_report(self, results: list[MutationResult]) -> FuzzReport:
         by_rule: dict[str, list[MutationResult]] = {}

@@ -61,21 +61,12 @@ class ChainEvidence:
     distinct_tools: int = 0
 
 
-def extract_evidence(
-    chain_path: str | Path, *, public_key_pem: bytes | None = None
-) -> ChainEvidence:
-    """Read a receipt chain (JSONL) and tally the facts controls are checked against.
+def _read_chain_lines(chain_path: str | Path) -> tuple[list[str], bool] | None:
+    """Read the chain file and extract the declared-signed flag from the header.
 
-    The chain is **actually verified** with :class:`~raucle.audit.AuditVerifier`
-    (codex #4) — a JSON ``signed:true`` flag on a forged file is NOT trusted. The
-    hash chain is always verified (tamper-evidence); checkpoint *signatures* are
-    verified only when ``public_key_pem`` is supplied, so a control is only marked
-    on signature strength when signatures were genuinely checked.
+    Returns ``(raw_lines, declared_signed)`` or ``None`` if the file is
+    unreadable/malformed (caller returns an unverifiable ChainEvidence).
     """
-    ev = ChainEvidence()
-    # Determine the declared-signed flag from the header up front. Malformed JSON
-    # is not evidence — return an unverifiable ChainEvidence rather than raising
-    # (codex r6 LOW).
     try:
         raw_lines = validate_path(chain_path).read_text(encoding="utf-8").splitlines()
         declared_signed = False
@@ -84,9 +75,19 @@ def extract_evidence(
             if line:
                 declared_signed = bool(json.loads(line).get("signed"))
                 break
+        return raw_lines, declared_signed
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        return ev  # all-zero / unverifiable; every control will read PARTIAL
-    key_given = public_key_pem is not None
+        return None
+
+
+def _verify_chain_evidence(
+    ev: ChainEvidence,
+    chain_path: str | Path,
+    declared_signed: bool,
+    key_given: bool,
+    public_key_pem: bytes | None,
+) -> None:
+    """Run the AuditVerifier and populate the verification fields on *ev*."""
     # A signed chain cannot be CONCLUSIVELY verified without the operator key:
     # AuditVerifier(no key) on a signed chain returns invalid because it cannot
     # authenticate the checkpoints. Treat that as inconclusive, NOT as failed —
@@ -107,6 +108,10 @@ def extract_evidence(
         ev.verifiable = True
         ev.chain_valid = False
         ev.signature_verified = False
+
+
+def _tally_chain_events(raw_lines: list[str], ev: ChainEvidence) -> None:
+    """Parse each JSONL record and tally events, decisions, and scans."""
     agents: set[str] = set()
     tools: set[str] = set()
     for line in raw_lines:
@@ -141,6 +146,30 @@ def extract_evidence(
                 ev.flagged_scans += 1
     ev.distinct_agents = len(agents)
     ev.distinct_tools = len(tools)
+
+
+def extract_evidence(
+    chain_path: str | Path, *, public_key_pem: bytes | None = None
+) -> ChainEvidence:
+    """Read a receipt chain (JSONL) and tally the facts controls are checked against.
+
+    The chain is **actually verified** with :class:`~raucle.audit.AuditVerifier`
+    (codex #4) — a JSON ``signed:true`` flag on a forged file is NOT trusted. The
+    hash chain is always verified (tamper-evidence); checkpoint *signatures* are
+    verified only when ``public_key_pem`` is supplied, so a control is only marked
+    on signature strength when signatures were genuinely checked.
+    """
+    ev = ChainEvidence()
+    # Determine the declared-signed flag from the header up front. Malformed JSON
+    # is not evidence — return an unverifiable ChainEvidence rather than raising
+    # (codex r6 LOW).
+    result = _read_chain_lines(chain_path)
+    if result is None:
+        return ev  # all-zero / unverifiable; every control will read PARTIAL
+    raw_lines, declared_signed = result
+    key_given = public_key_pem is not None
+    _verify_chain_evidence(ev, chain_path, declared_signed, key_given, public_key_pem)
+    _tally_chain_events(raw_lines, ev)
     return ev
 
 

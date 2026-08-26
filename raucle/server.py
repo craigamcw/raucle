@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from fastapi import FastAPI, HTTPException, Request  # type: ignore[import-untyped]
-    from fastapi.responses import PlainTextResponse  # type: ignore[import-untyped]
+    from fastapi.responses import JSONResponse, PlainTextResponse  # type: ignore[import-untyped]
     from pydantic import BaseModel, Field  # type: ignore[import-untyped]
 except ImportError as exc:
     raise ImportError(
@@ -354,10 +354,53 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 
+def _check_content_length(request: Request) -> JSONResponse | None:
+    """Reject oversized bodies before reading/parsing them (round-3 #3)."""
+    content_length = request.headers.get("content-length")
+    if content_length is None:
+        return None
+    try:
+        declared = int(content_length)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length."})
+    if declared > _MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": f"Request body too large (max {_MAX_BODY_BYTES} bytes)."},
+        )
+    return None
+
+
+def _check_api_key(request: Request) -> JSONResponse | None:
+    """Validate the API key, allowing ?access_token= for SSE endpoints."""
+    if not _api_key:
+        return None
+    # Browser EventSource cannot set an Authorization header, so the live
+    # view endpoints also accept ?access_token=<key> (constant-time check).
+    if request.url.path in ("/events", "/dashboard"):
+        qtoken = request.query_params.get("access_token", "")
+        if qtoken and secrets.compare_digest(qtoken.encode(), _api_key.encode()):
+            return None
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        _counters["raucle_auth_failures_total"] += 1
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing Authorization header. Use: Bearer <api-key>"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    provided_key = auth_header[len("Bearer ") :]
+    if not secrets.compare_digest(provided_key.encode(), _api_key.encode()):
+        _counters["raucle_auth_failures_total"] += 1
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Invalid API key."},
+        )
+    return None
+
+
 @app.middleware("http")
 async def _auth_and_rate_limit(request: Request, call_next):  # type: ignore[no-untyped-def]
-    from fastapi.responses import JSONResponse
-
     # /health is always open (liveness probe). /metrics is open only when no
     # API key is configured; once auth is enabled it must not leak counters to
     # unauthenticated callers (round-3 #18).
@@ -366,24 +409,12 @@ async def _auth_and_rate_limit(request: Request, call_next):  # type: ignore[no-
     if request.url.path == "/metrics" and not _api_key:
         return await call_next(request)
 
-    # Reject oversized bodies before reading/parsing them (round-3 #3).
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            declared = int(content_length)
-        except ValueError:
-            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length."})
-        if declared > _MAX_BODY_BYTES:
-            return JSONResponse(
-                status_code=413,
-                content={"detail": f"Request body too large (max {_MAX_BODY_BYTES} bytes)."},
-            )
+    body_error = _check_content_length(request)
+    if body_error is not None:
+        return body_error
 
     # Rate limiting
-    client_ip = _client_key(request)
-    if not _check_rate_limit(client_ip):
-        from fastapi.responses import JSONResponse
-
+    if not _check_rate_limit(_client_key(request)):
         _counters["raucle_rate_limited_total"] += 1
         return JSONResponse(
             status_code=429,
@@ -391,33 +422,9 @@ async def _auth_and_rate_limit(request: Request, call_next):  # type: ignore[no-
             headers={"Retry-After": "60"},
         )
 
-    # API key authentication
-    if _api_key:
-        # Browser EventSource cannot set an Authorization header, so the live
-        # view endpoints also accept ?access_token=<key> (constant-time check).
-        if request.url.path in ("/events", "/dashboard"):
-            qtoken = request.query_params.get("access_token", "")
-            if qtoken and secrets.compare_digest(qtoken.encode(), _api_key.encode()):
-                return await call_next(request)
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            from fastapi.responses import JSONResponse
-
-            _counters["raucle_auth_failures_total"] += 1
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Missing Authorization header. Use: Bearer <api-key>"},
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        provided_key = auth_header[len("Bearer ") :]
-        if not secrets.compare_digest(provided_key.encode(), _api_key.encode()):
-            from fastapi.responses import JSONResponse
-
-            _counters["raucle_auth_failures_total"] += 1
-            return JSONResponse(
-                status_code=403,
-                content={"detail": "Invalid API key."},
-            )
+    auth_error = _check_api_key(request)
+    if auth_error is not None:
+        return auth_error
 
     return await call_next(request)
 
@@ -617,6 +624,35 @@ _DASHBOARD_HTML = """<!doctype html>
 </script></body></html>"""
 
 
+def _audit_line_to_frame(line: str) -> str | None:
+    """Parse one audit log line into an SSE data frame (or ``None`` to skip)."""
+    import json as _json
+
+    try:
+        rec = _json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(rec, dict) or "chain_meta" in rec or "checkpoint" in rec:
+        return None
+    ev = rec.get("event") if isinstance(rec.get("event"), dict) else rec
+    return "data: " + _json.dumps(ev, ensure_ascii=False) + "\n\n"
+
+
+def _follow_audit_stream(fh):
+    """Yield live SSE frames from an open file handle, with keepalive on idle."""
+    import time as _time
+
+    while True:
+        line = fh.readline()
+        if not line:
+            _time.sleep(0.5)
+            yield ": keepalive\n\n"
+            continue
+        frame = _audit_line_to_frame(line)
+        if frame:
+            yield frame
+
+
 def _iter_audit_events(path: str, replay: int = 50, follow: bool = True):
     """Yield audit events as SSE frames: last *replay* existing, then live.
 
@@ -624,36 +660,15 @@ def _iter_audit_events(path: str, replay: int = 50, follow: bool = True):
     want a snapshot, and by tests (an infinite generator cannot be cleanly
     exhausted through a test client's thread portal).
     """
-    import json as _json
-    import time as _time
-
-    def to_frame(line: str) -> str | None:
-        try:
-            rec = _json.loads(line)
-        except ValueError:
-            return None
-        if not isinstance(rec, dict) or "chain_meta" in rec or "checkpoint" in rec:
-            return None
-        ev = rec.get("event") if isinstance(rec.get("event"), dict) else rec
-        return "data: " + _json.dumps(ev, ensure_ascii=False) + "\n\n"
-
     with open(path, encoding="utf-8") as fh:
         tail = fh.readlines()[-replay:]
         for line in tail:
-            frame = to_frame(line)
+            frame = _audit_line_to_frame(line)
             if frame:
                 yield frame
         if not follow:
             return
-        while True:
-            line = fh.readline()
-            if not line:
-                _time.sleep(0.5)
-                yield ": keepalive\n\n"
-                continue
-            frame = to_frame(line)
-            if frame:
-                yield frame
+        yield from _follow_audit_stream(fh)
 
 
 @app.get("/dashboard", responses={404: {"description": "Live view disabled"}})

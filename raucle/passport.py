@@ -155,6 +155,41 @@ def issue_passport(
     return passport
 
 
+def _parse_passport(passport: dict[str, Any] | AgentPassport) -> AgentPassport | PassportVerdict:
+    """Parse and validate the passport shape, fail-closed (codex #7)."""
+    try:
+        p = passport if isinstance(passport, AgentPassport) else AgentPassport.from_dict(passport)
+        if not isinstance(p.statement, dict) or not isinstance(p.issuer_key_id, str):
+            return PassportVerdict(False, "malformed passport (bad statement/issuer_key_id)")
+        # Strict expiry type: a numeric STRING would pass int() coercion and
+        # signature verification, then crash the ts >= expires_at comparison —
+        # a verifier DoS instead of fail-closed (codex r9). bool is an int
+        # subclass, so exclude it explicitly.
+        if p.expires_at is not None and (
+            not isinstance(p.expires_at, int) or isinstance(p.expires_at, bool)
+        ):
+            return PassportVerdict(False, "malformed passport (expires_at must be an integer)")
+        return p
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        return PassportVerdict(False, f"malformed passport: {type(exc).__name__}")
+
+
+def _verify_passport_signature(p: AgentPassport, pem: str) -> PassportVerdict | None:
+    """Verify the issuer signature. Returns a failure verdict or None on success."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    try:
+        loaded = serialization.load_pem_public_key(pem.encode())
+        if not isinstance(loaded, Ed25519PublicKey):
+            return PassportVerdict(False, "issuer key is not Ed25519")
+        loaded.verify(_b64d(p.issuer_signature), _canonical_json(p.body()))
+    except (InvalidSignature, ValueError, TypeError):
+        return PassportVerdict(False, "issuer signature did not verify")
+    return None
+
+
 def verify_passport(
     passport: dict[str, Any] | AgentPassport,
     *,
@@ -168,26 +203,12 @@ def verify_passport(
     not expired. On success the verdict carries the vouched agent identity and
     its allowed tools/models, ready for a framework integration to enforce.
     """
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
     # Fail-closed on ANY malformed input — a parse/shape error must yield an
     # invalid verdict, never an exception (codex #7).
-    try:
-        p = passport if isinstance(passport, AgentPassport) else AgentPassport.from_dict(passport)
-        if not isinstance(p.statement, dict) or not isinstance(p.issuer_key_id, str):
-            return PassportVerdict(False, "malformed passport (bad statement/issuer_key_id)")
-        # Strict expiry type: a numeric STRING would pass int() coercion and
-        # signature verification, then crash the ts >= expires_at comparison —
-        # a verifier DoS instead of fail-closed (codex r9). bool is an int
-        # subclass, so exclude it explicitly.
-        if p.expires_at is not None and (
-            not isinstance(p.expires_at, int) or isinstance(p.expires_at, bool)
-        ):
-            return PassportVerdict(False, "malformed passport (expires_at must be an integer)")
-    except (KeyError, TypeError, ValueError, AttributeError) as exc:
-        return PassportVerdict(False, f"malformed passport: {type(exc).__name__}")
+    parsed = _parse_passport(passport)
+    if isinstance(parsed, PassportVerdict):
+        return parsed
+    p = parsed
 
     if p.body().get("version") != PASSPORT_VERSION:
         return PassportVerdict(False, f"unknown passport version {p.body().get('version')!r}")
@@ -198,15 +219,10 @@ def verify_passport(
     if record is None or record.revoked:
         why = "revoked" if (record is not None and record.revoked) else "unknown"
         return PassportVerdict(False, f"issuer key_id {p.issuer_key_id} is {why} in the registry")
-    pem = record.public_key_pem
 
-    try:
-        loaded = serialization.load_pem_public_key(pem.encode())
-        if not isinstance(loaded, Ed25519PublicKey):
-            return PassportVerdict(False, "issuer key is not Ed25519")
-        loaded.verify(_b64d(p.issuer_signature), _canonical_json(p.body()))
-    except (InvalidSignature, ValueError, TypeError):
-        return PassportVerdict(False, "issuer signature did not verify")
+    sig_verdict = _verify_passport_signature(p, record.public_key_pem)
+    if sig_verdict is not None:
+        return sig_verdict
 
     # Anti-impersonation: the issuer NAME the passport claims must match the
     # registry's authoritative record for this key. Otherwise a registered org

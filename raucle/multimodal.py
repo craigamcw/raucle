@@ -238,6 +238,32 @@ def detect_ascii_art(text: str, min_word_length: int = 3) -> list[str]:
     lines = text.splitlines()
     # Look for runs of 5+ consecutive lines where each is "art-shaped":
     # high density of #/*/X characters, low density of alphanumerics.
+    art_runs = _extract_art_runs(lines)
+
+    decoded: list[str] = []
+    for run in art_runs:
+        word = _decode_glyph_run(run, min_word_length)
+        if word:
+            decoded.append(word)
+    return decoded
+
+
+def _is_art_line(line: str, fill_chars: set[str]) -> str | None:
+    """Return the normalised line if it is art-shaped, else ``None``."""
+    if len(line) < 6:
+        return None
+    fill_count = sum(1 for c in line if c in fill_chars)
+    alpha_count = sum(1 for c in line if c.isalnum())
+    # Art lines are mostly fill chars with very few real letters.
+    if fill_count >= 3 and alpha_count <= 2:
+        # Normalise into our canonical glyph alphabet: any fill -> '#',
+        # everything else (space, punctuation) -> ' '.
+        return "".join("#" if c in fill_chars else " " for c in line)
+    return None
+
+
+def _extract_art_runs(lines: list[str]) -> list[list[str]]:
+    """Break *lines* into runs of consecutive art-shaped lines (length ≥ 5)."""
     fill_chars = set("#*@█▓▒░X+")
     art_runs: list[list[str]] = []
     current: list[str] = []
@@ -248,13 +274,8 @@ def detect_ascii_art(text: str, min_word_length: int = 3) -> list[str]:
                 art_runs.append(current)
             current = []
             continue
-        fill_count = sum(1 for c in line if c in fill_chars)
-        alpha_count = sum(1 for c in line if c.isalnum())
-        # Art lines are mostly fill chars with very few real letters.
-        if fill_count >= 3 and alpha_count <= 2:
-            # Normalise into our canonical glyph alphabet: any fill -> '#',
-            # everything else (space, punctuation) -> ' '.
-            normalised = "".join("#" if c in fill_chars else " " for c in line)
+        normalised = _is_art_line(line, fill_chars)
+        if normalised is not None:
             current.append(normalised)
         else:
             if len(current) >= 5:
@@ -262,13 +283,24 @@ def detect_ascii_art(text: str, min_word_length: int = 3) -> list[str]:
             current = []
     if len(current) >= 5:
         art_runs.append(current)
+    return art_runs
 
-    decoded: list[str] = []
-    for run in art_runs:
-        word = _decode_glyph_run(run, min_word_length)
-        if word:
-            decoded.append(word)
-    return decoded
+
+def _skip_whitespace_columns(rows: list[str], pos: int, max_len: int) -> int:
+    """Advance *pos* past any all-space columns."""
+    while pos < max_len and all(rows[r][pos] == " " for r in range(5)):
+        pos += 1
+    return pos
+
+
+def _find_letter_end(rows: list[str], pos: int, max_len: int, cols_per_letter: int) -> int:
+    """Find the end column of the letter block starting at *pos*."""
+    end = min(pos + cols_per_letter, max_len)
+    while end < max_len and not all(rows[r][end] == " " for r in range(5)):
+        end += 1
+        if end - pos > cols_per_letter + 2:
+            break
+    return end
 
 
 def _decode_glyph_run(run: list[str], min_word_length: int) -> str:
@@ -284,18 +316,10 @@ def _decode_glyph_run(run: list[str], min_word_length: int) -> str:
     letters: list[str] = []
     pos = 0
     while pos < max_len:
-        # Skip whitespace columns
-        while pos < max_len and all(rows[r][pos] == " " for r in range(5)):
-            pos += 1
+        pos = _skip_whitespace_columns(rows, pos, max_len)
         if pos >= max_len:
             break
-        # Extract next letter-width block
-        end = min(pos + cols_per_letter, max_len)
-        # Extend the block if the next column is still non-empty
-        while end < max_len and not all(rows[r][end] == " " for r in range(5)):
-            end += 1
-            if end - pos > cols_per_letter + 2:
-                break
+        end = _find_letter_end(rows, pos, max_len, cols_per_letter)
         block = tuple(rows[r][pos:end].ljust(cols_per_letter)[:cols_per_letter] for r in range(5))
         letter = _match_glyph(block)
         if letter:
@@ -306,27 +330,31 @@ def _decode_glyph_run(run: list[str], min_word_length: int) -> str:
     return word if len(word) >= min_word_length else ""
 
 
+def _glyph_match_score(ref: tuple[str, ...], block: tuple[str, ...]) -> float:
+    """Compute the fraction of matching cells between a reference glyph and a block."""
+    matches = 0
+    total = 0
+    for r in range(5):
+        ref_row = ref[r]
+        blk_row = block[r] if r < len(block) else ""
+        for c in range(6):
+            a = ref_row[c] if c < len(ref_row) else " "
+            b = blk_row[c] if c < len(blk_row) else " "
+            if a == b:
+                matches += 1
+            total += 1
+    return matches / total if total > 0 else 0.0
+
+
 def _match_glyph(block: tuple[str, ...]) -> str:
     """Match *block* to the closest letter in :data:`_LETTER_GLYPHS`."""
     best_letter = ""
     best_score = 0.0
     for letter, ref in _LETTER_GLYPHS.items():
-        matches = 0
-        total = 0
-        for r in range(5):
-            ref_row = ref[r]
-            blk_row = block[r] if r < len(block) else ""
-            for c in range(6):
-                a = ref_row[c] if c < len(ref_row) else " "
-                b = blk_row[c] if c < len(blk_row) else " "
-                if a == b:
-                    matches += 1
-                total += 1
-        if total > 0:
-            score = matches / total
-            if score > best_score:
-                best_score = score
-                best_letter = letter
+        score = _glyph_match_score(ref, block)
+        if score > best_score:
+            best_score = score
+            best_letter = letter
     return best_letter if best_score >= 0.70 else ""
 
 
@@ -403,6 +431,51 @@ class MultimodalScanResult:
 # ---------------------------------------------------------------------------
 # MultimodalScanner — orchestrator
 # ---------------------------------------------------------------------------
+
+
+def _extract_exif_text(image: Any, exif_tags_module: Any) -> list[str]:
+    """Extract human-readable text fields from an image's EXIF data."""
+    parts: list[str] = []
+    try:
+        exif_data = image.getexif()
+        if not exif_data:
+            return parts
+        for tag_id, value in exif_data.items():
+            tag_name = exif_tags_module.TAGS.get(tag_id, str(tag_id))
+            value = _decode_exif_value(value)
+            if isinstance(value, str) and value.strip():
+                parts.append(f"{tag_name}: {value}")
+    except Exception as exc:
+        logger.debug("EXIF inspection failed: %s", exc)
+    return parts
+
+
+def _decode_exif_value(value: Any) -> Any:
+    """Decode a bytes EXIF value to a string, or return it unchanged."""
+    if not isinstance(value, (bytes, bytearray)):
+        return value
+    try:
+        return value.decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _run_ocr(image: Any, path: Path) -> str:
+    """Run Tesseract OCR on *image*, returning the stripped text (may be empty)."""
+    try:
+        import pytesseract  # type: ignore[import-untyped]
+
+        ocr_text = pytesseract.image_to_string(image) or ""
+    except ImportError as exc:
+        raise ImportError(
+            "Image OCR requires pytesseract. "
+            "Install with: pip install 'raucle[multimodal]' "
+            "and ensure tesseract is on PATH."
+        ) from exc
+    except Exception as exc:
+        logger.warning("Tesseract failed on %s: %s", path, exc)
+        return ""
+    return ocr_text.strip()
 
 
 class MultimodalScanner:
@@ -488,22 +561,7 @@ class MultimodalScanner:
             )
 
         # ---- EXIF -------------------------------------------------------
-        exif_text_parts: list[str] = []
-        try:
-            exif_data = image.getexif()
-            if exif_data:
-                for tag_id, value in exif_data.items():
-                    tag_name = ExifTags.TAGS.get(tag_id, str(tag_id))
-                    if isinstance(value, (bytes, bytearray)):
-                        try:
-                            value = value.decode("utf-8", errors="replace")
-                        except Exception:
-                            continue
-                    if isinstance(value, str) and value.strip():
-                        exif_text_parts.append(f"{tag_name}: {value}")
-        except Exception as exc:
-            logger.debug("EXIF inspection failed: %s", exc)
-
+        exif_text_parts = _extract_exif_text(image, ExifTags)
         if exif_text_parts:
             result.findings.append(
                 MultimodalFinding(
@@ -514,21 +572,7 @@ class MultimodalScanner:
             )
 
         # ---- OCR --------------------------------------------------------
-        ocr_text = ""
-        try:
-            import pytesseract  # type: ignore[import-untyped]
-
-            ocr_text = pytesseract.image_to_string(image) or ""
-        except ImportError as exc:
-            raise ImportError(
-                "Image OCR requires pytesseract. "
-                "Install with: pip install 'raucle[multimodal]' "
-                "and ensure tesseract is on PATH."
-            ) from exc
-        except Exception as exc:
-            logger.warning("Tesseract failed on %s: %s", path, exc)
-
-        ocr_text = ocr_text.strip()
+        ocr_text = _run_ocr(image, path)
         if ocr_text:
             result.findings.append(
                 MultimodalFinding(

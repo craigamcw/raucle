@@ -26,6 +26,15 @@ def _compile_pattern(pattern: str) -> re.Pattern[str] | None:
         return None
 
 
+def _compile_rule_patterns(rule: dict[str, Any]) -> list[tuple[re.Pattern[str] | None, str]]:
+    """Compile all patterns for a rule, skipping un-compilable ones.
+
+    Returns a list of ``(compiled, raw_pattern)`` tuples where *compiled*
+    is ``None`` for patterns that failed to compile.
+    """
+    return [(_compile_pattern(p), p) for p in rule.get("patterns", [])]
+
+
 # ---------------------------------------------------------------------------
 # ReDoS protection constants
 # ---------------------------------------------------------------------------
@@ -427,6 +436,23 @@ class PatternLayer:
             "matched_rules": matched_rules,
         }
 
+    def _try_rule(
+        self,
+        rule: dict[str, Any],
+        compiled_patterns: list[tuple[Any, str]],
+        text: str,
+    ) -> tuple[float, str, str] | None:
+        """Try matching one rule's compiled patterns against *text*.
+
+        Returns ``(score, technique, category)`` if the rule matched, else ``None``.
+        """
+        for compiled, raw in compiled_patterns:
+            if compiled is None:
+                continue
+            if self._safe_match(compiled, raw, text):
+                return rule.get("score", 0.5), rule.get("technique", ""), rule["category"]
+        return None
+
     def scan_with_rules(self, text: str, rule_lists: list[list[dict[str, Any]]]) -> dict[str, Any]:
         """Scan *text* against specific rule lists (not the loaded rules).
 
@@ -455,18 +481,15 @@ class PatternLayer:
                         "technique": matched_technique,
                         "matched_rules": matched_rules,
                     }
-                for p in rule.get("patterns", []):
-                    compiled = _compile_pattern(p)
-                    if compiled is None:
-                        continue
-                    if self._safe_match(compiled, p, text):
-                        score = rule.get("score", 0.5)
-                        if score > best_score:
-                            best_score = score
-                            matched_technique = rule.get("technique", "")
-                        matched_categories.append(rule["category"])
-                        matched_rules.append(rule["id"])
-                        break  # One match per rule is sufficient
+                compiled_patterns = _compile_rule_patterns(rule)
+                match = self._try_rule(rule, compiled_patterns, text)
+                if match:
+                    score, technique, category = match
+                    if score > best_score:
+                        best_score = score
+                        matched_technique = technique
+                    matched_categories.append(category)
+                    matched_rules.append(rule["id"])
 
         return {
             "score": best_score,

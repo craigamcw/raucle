@@ -222,6 +222,85 @@ class Scanner:
             self._ruleset_hash_cached = hash_ruleset(self._pattern_layer._rules)
         return self._ruleset_hash_cached
 
+    def _issue_receipt(self, result: ScanResult, input_text: str) -> None:
+        """Issue a signed verdict receipt, honouring the require-receipts flag."""
+        if self._verdict_signer is None:
+            return
+        try:
+            result.receipt = self._verdict_signer.issue(
+                input_text=input_text,
+                verdict=result.verdict,
+                confidence=result.confidence,
+                ruleset_hash=self._ruleset_hash(),
+                model_version=self._model_version,
+                tenant=self._tenant,
+            )
+        except Exception as exc:
+            logger.warning("Failed to issue verdict receipt: %s", exc)
+            if self._require_receipts:
+                raise ReceiptEmissionError(f"Failed to issue verdict receipt: {exc}") from exc
+
+    def _write_audit(self, result: ScanResult, input_text: str, scan_kind: str) -> None:
+        """Append an audit event, honouring the require-receipts flag."""
+        if self._audit_sink is None:
+            return
+        try:
+            self._audit_sink.append(
+                {
+                    "kind": scan_kind,
+                    "tenant": self._tenant,
+                    "verdict": result.verdict,
+                    "confidence": result.confidence,
+                    "categories": result.categories,
+                    "matched_rules": result.matched_rules,
+                    "ruleset_hash": self._ruleset_hash(),
+                    "model_version": self._model_version,
+                    "input_hash": _input_hash(input_text),
+                }
+            )
+        except Exception as exc:
+            logger.warning("Failed to write audit event: %s", exc)
+            if self._require_receipts:
+                raise ReceiptEmissionError(f"Failed to write audit event: {exc}") from exc
+
+    def _emit_provenance(
+        self,
+        result: ScanResult,
+        input_text: str,
+        scan_kind: str,
+        provenance_parents: list[str] | None,
+    ) -> None:
+        """Record a provenance guardrail scan, honouring the require-receipts flag."""
+        if self._provenance_logger is None:
+            return
+        try:
+            # Map the scan kind to the target the guardrail acted on.
+            scan_target = {
+                "scan": "input",
+                "scan_output": "output",
+                "scan_tool_call": "tool_call",
+            }.get(scan_kind, "input")
+            result.provenance_hash = self._provenance_logger.record_guardrail_scan(
+                parents=list(provenance_parents or []),
+                scanned_text=input_text,
+                verdict=result.verdict,
+                ruleset_hash=self._ruleset_hash(),
+                scan_target=scan_target,
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit provenance receipt: %s", exc)
+            if self._require_receipts:
+                raise ReceiptEmissionError(f"Failed to emit provenance receipt: {exc}") from exc
+
+    def _persist_input(self, input_text: str) -> None:
+        """Persist original input text for later counterfactual replay."""
+        if self._input_store is None:
+            return
+        try:
+            self._input_store.add(input_text, tenant=self._tenant)
+        except Exception as exc:
+            logger.warning("Failed to write input store: %s", exc)
+
     def _finalize(
         self,
         result: ScanResult,
@@ -230,70 +309,10 @@ class Scanner:
         provenance_parents: list[str] | None = None,
     ) -> ScanResult:
         """Apply signed-receipt + audit-sink + provenance side effects."""
-        if self._verdict_signer is not None:
-            try:
-                result.receipt = self._verdict_signer.issue(
-                    input_text=input_text,
-                    verdict=result.verdict,
-                    confidence=result.confidence,
-                    ruleset_hash=self._ruleset_hash(),
-                    model_version=self._model_version,
-                    tenant=self._tenant,
-                )
-            except Exception as exc:
-                logger.warning("Failed to issue verdict receipt: %s", exc)
-                if self._require_receipts:
-                    raise ReceiptEmissionError(f"Failed to issue verdict receipt: {exc}") from exc
-
-        if self._audit_sink is not None:
-            try:
-                self._audit_sink.append(
-                    {
-                        "kind": scan_kind,
-                        "tenant": self._tenant,
-                        "verdict": result.verdict,
-                        "confidence": result.confidence,
-                        "categories": result.categories,
-                        "matched_rules": result.matched_rules,
-                        "ruleset_hash": self._ruleset_hash(),
-                        "model_version": self._model_version,
-                        "input_hash": _input_hash(input_text),
-                    }
-                )
-            except Exception as exc:
-                logger.warning("Failed to write audit event: %s", exc)
-                if self._require_receipts:
-                    raise ReceiptEmissionError(f"Failed to write audit event: {exc}") from exc
-
-        if self._provenance_logger is not None:
-            try:
-                # Map the scan kind to the target the guardrail acted on.
-                scan_target = {
-                    "scan": "input",
-                    "scan_output": "output",
-                    "scan_tool_call": "tool_call",
-                }.get(scan_kind, "input")
-                result.provenance_hash = self._provenance_logger.record_guardrail_scan(
-                    parents=list(provenance_parents or []),
-                    scanned_text=input_text,
-                    verdict=result.verdict,
-                    ruleset_hash=self._ruleset_hash(),
-                    scan_target=scan_target,
-                )
-            except Exception as exc:
-                logger.warning("Failed to emit provenance receipt: %s", exc)
-                if self._require_receipts:
-                    raise ReceiptEmissionError(f"Failed to emit provenance receipt: {exc}") from exc
-
-        # Optionally persist the original input text so a later counterfactual
-        # replay can re-run the scanner against the same prompts. The store
-        # is hash-keyed and append-only; duplicates are no-ops.
-        if self._input_store is not None:
-            try:
-                self._input_store.add(input_text, tenant=self._tenant)
-            except Exception as exc:
-                logger.warning("Failed to write input store: %s", exc)
-
+        self._issue_receipt(result, input_text)
+        self._write_audit(result, input_text, scan_kind)
+        self._emit_provenance(result, input_text, scan_kind, provenance_parents)
+        self._persist_input(input_text)
         return result
 
     # ------------------------------------------------------------------
@@ -406,6 +425,28 @@ class Scanner:
             provenance_parents=provenance_parents,
         )
 
+    def _detect_prompt_mirroring(self, pat: dict, output: str, original_prompt: str) -> list[str]:
+        """Check if substantial chunks of the prompt appear in the output.
+
+        Returns a list of notes to add (empty if no mirroring detected).
+        Mutates *pat* in place to flag the leakage.
+        """
+        if not original_prompt or len(original_prompt) <= 20:
+            return []
+        prompt_lower = original_prompt.lower()
+        output_lower = output.lower()
+        window = 50  # characters
+        for i in range(0, min(len(prompt_lower) - window, 500), 10):
+            chunk = prompt_lower[i : i + window]
+            if chunk in output_lower:
+                if pat["score"] < 0.80:
+                    pat["score"] = 0.80
+                if "data_leakage" not in pat["categories"]:
+                    pat["categories"].append("data_leakage")
+                pat["technique"] = pat.get("technique") or "system_prompt_leak"
+                return ["Output contains content that mirrors the original prompt."]
+        return []
+
     def scan_output(
         self,
         output: str,
@@ -442,22 +483,7 @@ class Scanner:
         pat = self._pattern_layer.scan_with_rules(output, [OUTPUT_RULES, dlp_rules])
 
         # If original_prompt is provided, check for suspicious mirroring
-        if original_prompt and len(original_prompt) > 20:
-            # Check if substantial chunks of the prompt appear in the output
-            # Use sliding window to find shared substrings
-            prompt_lower = original_prompt.lower()
-            output_lower = output.lower()
-            window = 50  # characters
-            for i in range(0, min(len(prompt_lower) - window, 500), 10):
-                chunk = prompt_lower[i : i + window]
-                if chunk in output_lower:
-                    if pat["score"] < 0.80:
-                        pat["score"] = 0.80
-                    if "data_leakage" not in pat["categories"]:
-                        pat["categories"].append("data_leakage")
-                    pat["technique"] = pat.get("technique") or "system_prompt_leak"
-                    notes.append("Output contains content that mirrors the original prompt.")
-                    break
+        notes.extend(self._detect_prompt_mirroring(pat, output, original_prompt or ""))
 
         # Semantic layer on output
         if self._ml is not None:

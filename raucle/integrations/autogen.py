@@ -249,14 +249,7 @@ def _wrap_function_tool(
 
     async def gated(**kwargs: Any) -> Any:
         token = resolver(tool_name)
-        if token is None:
-            decision = GateDecision(allowed=False, reason="no in-force capability token")
-        else:
-            # Pass agent_id so the gate enforces the token's agent scope.
-            # Without it the gate skips the descendant check entirely, so a
-            # token minted for agent A would authorize a call stamped agent B
-            # (round-3 #2). The other adapters all forward agent_id.
-            decision = gate.check(token=token, tool=tool_name, args=kwargs, agent_id=agent_id)
+        decision = _evaluate_gate(gate, token, tool_name, kwargs, agent_id)
 
         _emit_receipt(
             sink,
@@ -268,15 +261,7 @@ def _wrap_function_tool(
             lean_theorem_id=lean_theorem_id,
         )
 
-        if not decision.allowed:
-            if raise_on_deny:
-                raise CapabilityDenied(tool_name, decision.reason or "denied")
-            # shadow-mode: warn but proceed
-            logger.warning(
-                "raucle shadow-mode: %s denied (%s) but call proceeding",
-                tool_name,
-                decision.reason,
-            )
+        _enforce_decision(decision, tool_name, raise_on_deny)
 
         # Delegate. Preserve sync vs async semantics.
         import inspect
@@ -289,6 +274,37 @@ def _wrap_function_tool(
     gated.__doc__ = original_func.__doc__
 
     return FunctionTool(gated, description=description, name=tool_name)
+
+
+def _evaluate_gate(
+    gate: CapabilityGate,
+    token: Any,
+    tool_name: str,
+    kwargs: dict[str, Any],
+    agent_id: str,
+) -> GateDecision:
+    """Evaluate the capability gate, or deny when no token is in force."""
+    if token is None:
+        return GateDecision(allowed=False, reason="no in-force capability token")
+    # Pass agent_id so the gate enforces the token's agent scope.
+    # Without it the gate skips the descendant check entirely, so a
+    # token minted for agent A would authorize a call stamped agent B
+    # (round-3 #2). The other adapters all forward agent_id.
+    return gate.check(token=token, tool=tool_name, args=kwargs, agent_id=agent_id)
+
+
+def _enforce_decision(decision: GateDecision, tool_name: str, raise_on_deny: bool) -> None:
+    """Raise or warn based on the gate decision."""
+    if decision.allowed:
+        return
+    if raise_on_deny:
+        raise CapabilityDenied(tool_name, decision.reason or "denied")
+    # shadow-mode: warn but proceed
+    logger.warning(
+        "raucle shadow-mode: %s denied (%s) but call proceeding",
+        tool_name,
+        decision.reason,
+    )
 
 
 __all__ = [

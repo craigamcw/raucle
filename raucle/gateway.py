@@ -29,7 +29,6 @@ import json
 import logging
 import os
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -123,9 +122,7 @@ class GatewayStats:
     allowed: int = 0
     denied: int = 0
     escalated: int = 0
-    by_tool: dict[str, dict[str, int]] = field(
-        default_factory=lambda: defaultdict(lambda: {"allow": 0, "deny": 0})
-    )
+    by_tool: dict[str, dict[str, int]] = field(default_factory=dict)
     latency_us_total: int = 0
     latency_us_count: int = 0
 
@@ -133,12 +130,15 @@ class GatewayStats:
         self.total_requests += 1
         if decision == "allow":
             self.allowed += 1
-            self.by_tool[tool]["allow"] += 1
+            self.by_tool.setdefault(tool, {})
+            self.by_tool[tool]["allow"] = self.by_tool[tool].get("allow", 0) + 1
         elif decision == "deny":
             self.denied += 1
-            self.by_tool[tool]["deny"] += 1
+            self.by_tool.setdefault(tool, {})
+            self.by_tool[tool]["deny"] = self.by_tool[tool].get("deny", 0) + 1
         else:
             self.escalated += 1
+            self.by_tool.setdefault(tool, {})
             self.by_tool[tool][decision] = self.by_tool[tool].get(decision, 0) + 1
         self.latency_us_total += latency_us
         self.latency_us_count += 1

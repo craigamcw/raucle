@@ -1,4 +1,5 @@
-"""Gateway entry point: starts both the gateway API and admin panel.
+"""Gateway entry point: starts both the gateway API and admin panel
+in a single process using asyncio.
 
 Usage:
     python -m raucle.gateway_server
@@ -12,8 +13,8 @@ Environment variables (see GatewayConfig for full list):
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import multiprocessing
 import sys
 
 import uvicorn
@@ -28,20 +29,35 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run_gateway_app(config: GatewayConfig, gateway: RaucleGateway) -> None:
-    """Run the gateway API (agent-facing) on the main port."""
-    app = create_gateway_app(gateway)
-    uvicorn.run(app, host=config.host, port=config.port, log_level="info")
-
-
-def run_admin_app(
+async def run_both_servers(
     config: GatewayConfig,
     gateway: RaucleGateway,
     users: UserManager,
 ) -> None:
-    """Run the admin panel on the admin port."""
-    app = create_admin_app(gateway, users)
-    uvicorn.run(app, host=config.host, port=config.admin_port, log_level="info")
+    """Run the gateway API and admin panel concurrently in one process."""
+    gateway_app = create_gateway_app(gateway)
+    admin_app = create_admin_app(gateway, users)
+
+    gateway_config = uvicorn.Config(
+        gateway_app,
+        host=config.host,
+        port=config.port,
+        log_level="info",
+    )
+    admin_config = uvicorn.Config(
+        admin_app,
+        host=config.host,
+        port=config.admin_port,
+        log_level="info",
+    )
+
+    gateway_server = uvicorn.Server(gateway_config)
+    admin_server = uvicorn.Server(admin_config)
+
+    await asyncio.gather(
+        gateway_server.serve(),
+        admin_server.serve(),
+    )
 
 
 def main() -> None:
@@ -59,39 +75,17 @@ def main() -> None:
 
     # Initialise user management
     users = UserManager()
-    # Create a default admin user from RAUCLE_ADMIN_KEY
     if config.admin_api_key:
         users.add_user(config.admin_api_key, "admin", "Default Admin")
         logger.info("Default admin user created from RAUCLE_ADMIN_KEY")
 
-    # Start both servers in separate processes
     logger.info("Starting gateway API on %s:%d", config.host, config.port)
     logger.info("Starting admin panel on %s:%d", config.host, config.admin_port)
 
-    gateway_proc = multiprocessing.Process(
-        target=run_gateway_app,
-        args=(config, gateway),
-        name="raucle-gateway",
-    )
-    admin_proc = multiprocessing.Process(
-        target=run_admin_app,
-        args=(config, gateway, users),
-        name="raucle-admin",
-    )
-
-    gateway_proc.start()
-    admin_proc.start()
-
-    logger.info("Gateway started. Press Ctrl-C to stop.")
-
     try:
-        gateway_proc.join()
+        asyncio.run(run_both_servers(config, gateway, users))
     except KeyboardInterrupt:
         logger.info("Shutting down...")
-        gateway_proc.terminate()
-        admin_proc.terminate()
-        gateway_proc.join()
-        admin_proc.join()
         sys.exit(0)
 
 

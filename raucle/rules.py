@@ -107,7 +107,7 @@ def load_yaml_file(path: str | Path) -> list[dict[str, Any]]:
         errors = _validate_rule(rule, str(path))
         if errors:
             for err in errors:
-                logger.error("Rule validation error: %s", err)
+                logger.exception("Rule validation error: %s", err)
         else:
             valid_rules.append(rule)
 
@@ -137,7 +137,7 @@ def load_rules_dir(directory: str | Path) -> list[dict[str, Any]]:
             rules.extend(load_yaml_file(rule_file))
             logger.info("Loaded %s", rule_file.name)
         except Exception as exc:
-            logger.error("Failed to load %s: %s", rule_file, exc)
+            logger.exception("Failed to load %s: %s", rule_file, exc)
 
     return rules
 

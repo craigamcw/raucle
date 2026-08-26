@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from raucle._paths import validate_path
+
 from . import __version__
 from .prove import ProofResult
 from .provenance import (
@@ -342,7 +344,7 @@ def build_report(
     }
 
     input_hashes = {
-        "chain_sha256": _SHA256_PREFIX + _sha256_hex(Path(chain_path).read_bytes()),
+        "chain_sha256": _SHA256_PREFIX + _sha256_hex(validate_path(chain_path).read_bytes()),
         "public_keys": {
             kid: _SHA256_PREFIX + _sha256_hex(pem) for kid, pem in sorted(public_keys.items())
         },
@@ -532,7 +534,7 @@ def render_html(manifest: dict[str, Any]) -> str:
 <p>Public keys:</p><ul>{pk or "<li>none</li>"}</ul>
 <p>Capability statements (gate allowed-tools / models — they affect node
  status):</p><ul>{cs or "<li>none (no per-agent tool/model enforcement applied)</li>"}</ul>
-<p>Proof certificates: {_esc(", ".join(h for h in body["input_hashes"]["proofs"]) or "none")}</p>
+<p>Proof certificates: {_esc(", ".join(body["input_hashes"]["proofs"]) or "none")}</p>
 
 <h2>Verify this report yourself</h2>
 <ol>

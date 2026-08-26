@@ -74,6 +74,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from raucle._paths import validate_path
+
 from . import registry as _registry
 from ._canon import reject_lone_surrogates as _reject_lone_surrogates
 from ._canon import reorder_keys_utf16 as _reorder_keys_utf16
@@ -358,11 +360,12 @@ class Capability:
         )
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False))
+        p = validate_path(path, must_exist=False)
+        p.write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False))
 
     @classmethod
     def load(cls, path: str | Path) -> Capability:
-        return cls.from_dict(json.loads(Path(path).read_text()))
+        return cls.from_dict(json.loads(validate_path(path).read_text()))
 
 
 # Derived from the Modelled Language Registry (§8.1) — the single source of
@@ -473,68 +476,80 @@ def _normalise_constraints(c: dict[str, Any]) -> dict[str, Any]:
             f"{sorted(_KNOWN_CONSTRAINT_KEYS)}."
         )
     out: dict[str, Any] = {}
-    if "forbidden_values" in c:
-        _validate_field_keys("forbidden_values", c["forbidden_values"])
-        out["forbidden_values"] = {
-            k: sorted(_as_value_list("forbidden_values", k, v), key=_value_sort_key)
-            for k, v in c["forbidden_values"].items()
-        }
-    if "allowed_values" in c:
-        _validate_field_keys("allowed_values", c["allowed_values"])
-        out["allowed_values"] = {
-            k: sorted(_as_value_list("allowed_values", k, v), key=_value_sort_key)
-            for k, v in c["allowed_values"].items()
-        }
-    if "starts_with" in c:
-        _validate_field_keys("starts_with", c["starts_with"])
-        for fld, prefix in c["starts_with"].items():
-            if not isinstance(prefix, str):
-                raise ValueError(
-                    f"starts_with[{fld!r}] prefix must be a string, got "
-                    f"{type(prefix).__name__} {prefix!r} (§8.5)"
-                )
-        out["starts_with"] = dict(c["starts_with"])
-    if "max_value" in c:
-        _validate_field_keys("max_value", c["max_value"])
-        for fld, bound in c["max_value"].items():
-            _require_int_bound("max_value", fld, bound)
-        out["max_value"] = dict(c["max_value"])
-    if "min_value" in c:
-        _validate_field_keys("min_value", c["min_value"])
-        for fld, bound in c["min_value"].items():
-            _require_int_bound("min_value", fld, bound)
-        out["min_value"] = dict(c["min_value"])
-    if "required_present" in c:
-        out["required_present"] = sorted(
-            _require_field_name_list("required_present", c), key=_utf16_key
-        )
-    if "forbidden_field_combinations" in c:
-        combos = c["forbidden_field_combinations"]
-        if not isinstance(combos, list):
-            raise ValueError(
-                "forbidden_field_combinations must be a list of field-name lists (§8.5)"
-            )
-        norm_combos = []
-        for combo in combos:
-            if not isinstance(combo, list):
-                raise ValueError(
-                    f"forbidden_field_combinations entry {combo!r} must be a list of "
-                    f"field names (§8.5)"
-                )
-            for fld in combo:
-                if not isinstance(fld, str) or not fld:
-                    raise ValueError(
-                        f"forbidden_field_combinations field name must be a non-empty "
-                        f"string, got {fld!r} (§8.5)"
-                    )
-            norm_combos.append(sorted(combo, key=_utf16_key))
-        # Sort the outer list of combos by their UTF-16-ordered field names too,
-        # so the signed canonical form is deterministic and code-point/UTF-16
-        # consistent for non-BMP field names.
-        out["forbidden_field_combinations"] = sorted(
-            norm_combos, key=lambda combo: [_utf16_key(x) for x in combo]
-        )
+    _normalise_value_list_constraint(c, "forbidden_values", out)
+    _normalise_value_list_constraint(c, "allowed_values", out)
+    _normalise_starts_with(c, out)
+    _normalise_int_bound(c, "max_value", out)
+    _normalise_int_bound(c, "min_value", out)
+    _normalise_required_present(c, out)
+    _normalise_forbidden_field_combinations(c, out)
     return out
+
+
+def _normalise_value_list_constraint(c: dict[str, Any], key: str, out: dict[str, Any]) -> None:
+    if key not in c:
+        return
+    _validate_field_keys(key, c[key])
+    out[key] = {
+        k: sorted(_as_value_list(key, k, v), key=_value_sort_key) for k, v in c[key].items()
+    }
+
+
+def _normalise_starts_with(c: dict[str, Any], out: dict[str, Any]) -> None:
+    if "starts_with" not in c:
+        return
+    _validate_field_keys("starts_with", c["starts_with"])
+    for fld, prefix in c["starts_with"].items():
+        if not isinstance(prefix, str):
+            raise ValueError(
+                f"starts_with[{fld!r}] prefix must be a string, got "
+                f"{type(prefix).__name__} {prefix!r} (§8.5)"
+            )
+    out["starts_with"] = dict(c["starts_with"])
+
+
+def _normalise_int_bound(c: dict[str, Any], key: str, out: dict[str, Any]) -> None:
+    if key not in c:
+        return
+    _validate_field_keys(key, c[key])
+    for fld, bound in c[key].items():
+        _require_int_bound(key, fld, bound)
+    out[key] = dict(c[key])
+
+
+def _normalise_required_present(c: dict[str, Any], out: dict[str, Any]) -> None:
+    if "required_present" not in c:
+        return
+    out["required_present"] = sorted(
+        _require_field_name_list("required_present", c), key=_utf16_key
+    )
+
+
+def _normalise_forbidden_field_combinations(c: dict[str, Any], out: dict[str, Any]) -> None:
+    if "forbidden_field_combinations" not in c:
+        return
+    combos = c["forbidden_field_combinations"]
+    if not isinstance(combos, list):
+        raise ValueError("forbidden_field_combinations must be a list of field-name lists (§8.5)")
+    norm_combos = []
+    for combo in combos:
+        if not isinstance(combo, list):
+            raise ValueError(
+                f"forbidden_field_combinations entry {combo!r} must be a list of field names (§8.5)"
+            )
+        for fld in combo:
+            if not isinstance(fld, str) or not fld:
+                raise ValueError(
+                    f"forbidden_field_combinations field name must be a non-empty "
+                    f"string, got {fld!r} (§8.5)"
+                )
+        norm_combos.append(sorted(combo, key=_utf16_key))
+    # Sort the outer list of combos by their UTF-16-ordered field names too,
+    # so the signed canonical form is deterministic and code-point/UTF-16
+    # consistent for non-BMP field names.
+    out["forbidden_field_combinations"] = sorted(
+        norm_combos, key=lambda combo: [_utf16_key(x) for x in combo]
+    )
 
 
 def _require_field_name_list(kind: str, c: dict[str, Any]) -> list[str]:
@@ -594,7 +609,7 @@ class CapabilityIssuer:
             raise ValueError("issuer must not be empty")
         self.issuer = issuer
         self._priv = private_key
-        serialization, _ed25519, _InvalidSig = _require_crypto()
+        serialization, _ed25519, _invalid_sig = _require_crypto()
         pub_pem = private_key.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -638,13 +653,16 @@ class CapabilityIssuer:
         unencrypted keys (the default, preserving backward compatibility).
         In regulated deployments, private keys at rest should be encrypted.
         """
-        serialization, _ed, _InvalidSig = _require_crypto()
+        serialization, _ed, _invalid_sig = _require_crypto()
         pw = password.encode("utf-8") if isinstance(password, str) else password
-        priv = serialization.load_pem_private_key(Path(path).read_bytes(), password=pw)
+        key_path = Path(path).resolve()
+        if not key_path.is_file():
+            raise ValueError(f"private key file not found: {key_path}")
+        priv = serialization.load_pem_private_key(key_path.read_bytes(), password=pw)
         return cls(issuer=issuer, private_key=priv, require_proof=require_proof)
 
     def save_private_key(self, path: str | Path) -> None:
-        serialization, _ed, _InvalidSig = _require_crypto()
+        serialization, _ed, _invalid_sig = _require_crypto()
         pem = self._priv.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -741,33 +759,9 @@ class CapabilityIssuer:
 
         # ── Derive the bound hashes from the proof when present ─────
         if proof_result is not None:
-            if proof_result.status != "PROVEN":
-                # Even outside strict mode: binding a non-PROVEN proof
-                # to a capability is nonsensical. Refuse it explicitly.
-                raise PolicyUnproven(
-                    f"mint(): refuse to bind a non-PROVEN ProofResult "
-                    f"(status={proof_result.status!r}) to a capability"
-                )
-            if policy_proof_hash is not None and policy_proof_hash != proof_result.hash:
-                raise ValueError(
-                    "policy_proof_hash conflicts with proof_result.hash; "
-                    "pass one or the other, not both"
-                )
-            policy_proof_hash = proof_result.hash
-            # Cross-check caller-supplied hashes against the proof's
-            # if the caller asserted them — surface mismatches loudly.
-            if grammar_hash is not None and grammar_hash != proof_result.grammar_hash:
-                raise PolicyUnproven(
-                    f"grammar_hash {grammar_hash!r} does not match "
-                    f"ProofResult.grammar_hash {proof_result.grammar_hash!r}"
-                )
-            if policy_hash is not None and policy_hash != proof_result.policy_hash:
-                raise PolicyUnproven(
-                    f"policy_hash {policy_hash!r} does not match "
-                    f"ProofResult.policy_hash {proof_result.policy_hash!r}"
-                )
-            grammar_hash = proof_result.grammar_hash
-            policy_hash = proof_result.policy_hash
+            policy_proof_hash, grammar_hash, policy_hash = self._bind_proof_hashes(
+                proof_result, policy_proof_hash, grammar_hash, policy_hash
+            )
 
         now = _now()
         cap = Capability(
@@ -789,6 +783,47 @@ class CapabilityIssuer:
         # Re-canonicalise with token_id included.
         cap.signature = _b64(self._priv.sign(_canonical_json(cap.body())))
         return cap
+
+    @staticmethod
+    def _bind_proof_hashes(
+        proof_result: Any,
+        policy_proof_hash: str | None,
+        grammar_hash: str | None,
+        policy_hash: str | None,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Derive the bound hashes from the proof when present.
+
+        Even outside strict mode: binding a non-PROVEN proof to a capability
+        is nonsensical. Refuse it explicitly.
+        """
+        from raucle.errors import PolicyUnproven
+
+        if proof_result.status != "PROVEN":
+            raise PolicyUnproven(
+                f"mint(): refuse to bind a non-PROVEN ProofResult "
+                f"(status={proof_result.status!r}) to a capability"
+            )
+        if policy_proof_hash is not None and policy_proof_hash != proof_result.hash:
+            raise ValueError(
+                "policy_proof_hash conflicts with proof_result.hash; "
+                "pass one or the other, not both"
+            )
+        policy_proof_hash = proof_result.hash
+        # Cross-check caller-supplied hashes against the proof's
+        # if the caller asserted them — surface mismatches loudly.
+        if grammar_hash is not None and grammar_hash != proof_result.grammar_hash:
+            raise PolicyUnproven(
+                f"grammar_hash {grammar_hash!r} does not match "
+                f"ProofResult.grammar_hash {proof_result.grammar_hash!r}"
+            )
+        if policy_hash is not None and policy_hash != proof_result.policy_hash:
+            raise PolicyUnproven(
+                f"policy_hash {policy_hash!r} does not match "
+                f"ProofResult.policy_hash {proof_result.policy_hash!r}"
+            )
+        grammar_hash = proof_result.grammar_hash
+        policy_hash = proof_result.policy_hash
+        return policy_proof_hash, grammar_hash, policy_hash
 
     def attenuate(
         self,
@@ -903,6 +938,27 @@ def _intersect_values(a, b):
     return list(seen.values())
 
 
+def _merge_starts_with(out: dict[str, Any], fld: str, prefix: str) -> None:
+    """Merge a starts_with prefix into the output, enforcing narrowing."""
+    existing = out.get(fld)
+    if existing is None:
+        out[fld] = prefix
+    elif prefix.startswith(existing):
+        # Child extends the parent's prefix → strictly narrower. Keep child's.
+        out[fld] = prefix
+    elif existing.startswith(prefix):
+        # Child's prefix is broader than the parent's → would broaden. Refuse.
+        raise ValueError(
+            f"attenuation cannot broaden starts_with[{fld!r}]: "
+            f"{prefix!r} is broader than parent {existing!r}"
+        )
+    else:
+        raise ValueError(
+            f"attenuation starts_with[{fld!r}] {prefix!r} is disjoint from "
+            f"parent {existing!r} — no non-empty narrowing exists"
+        )
+
+
 def _merge_narrowing(parent: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     """Combine two constraint sets, taking the tighter bound on every key.
 
@@ -921,30 +977,14 @@ def _merge_narrowing(parent: dict[str, Any], extra: dict[str, Any]) -> dict[str,
     for fld, vals in extra.get("allowed_values", {}).items():
         out.setdefault("allowed_values", {})
         if fld in out["allowed_values"]:
-            # Intersection = tighter
+            # Intersecting is tighter
             out["allowed_values"][fld] = _intersect_values(out["allowed_values"][fld], vals)
         else:
             out["allowed_values"][fld] = _union_values(vals, [])
 
     for fld, prefix in extra.get("starts_with", {}).items():
         out.setdefault("starts_with", {})
-        existing = out["starts_with"].get(fld)
-        if existing is None:
-            out["starts_with"][fld] = prefix
-        elif prefix.startswith(existing):
-            # Child extends the parent's prefix → strictly narrower. Keep child's.
-            out["starts_with"][fld] = prefix
-        elif existing.startswith(prefix):
-            # Child's prefix is broader than the parent's → would broaden. Refuse.
-            raise ValueError(
-                f"attenuation cannot broaden starts_with[{fld!r}]: "
-                f"{prefix!r} is broader than parent {existing!r}"
-            )
-        else:
-            raise ValueError(
-                f"attenuation starts_with[{fld!r}] {prefix!r} is disjoint from "
-                f"parent {existing!r} — no non-empty narrowing exists"
-            )
+        _merge_starts_with(out["starts_with"], fld, prefix)
 
     for fld, bound in extra.get("max_value", {}).items():
         out.setdefault("max_value", {})
@@ -1227,58 +1267,69 @@ class CapabilityGate:
                 token.token_id,
             )
         if token.parent_id is not None and self._resolver is not None:
-            current = token
-            while current.parent_id:
-                parent = self._resolver(current.parent_id)
-                if parent is None:
-                    return GateDecision(
-                        False,
-                        f"unresolved parent {current.parent_id!r}",
-                        token.token_id,
-                        chain,
-                    )
-                pem2 = self._issuers.get(parent.key_id)
-                if pem2 is None:
-                    return GateDecision(
-                        False,
-                        f"parent {parent.token_id} signed by untrusted key",
-                        token.token_id,
-                        chain,
-                    )
-                try:
-                    self._verify_signature(parent, pem2)
-                except ValueError as exc:
-                    return GateDecision(
-                        False,
-                        f"parent {parent.token_id} bad signature: {exc}",
-                        token.token_id,
-                        chain,
-                    )
-                # Revocation must reach the whole ancestor chain, not just the
-                # token's direct parent. Revoking any ancestor denies every
-                # descendant when a resolver is present (REVOKE-DEPTH).
-                if parent.token_id in self._revoked:
-                    return GateDecision(
-                        False,
-                        f"ancestor token {parent.token_id} is revoked",
-                        token.token_id,
-                        chain,
-                    )
-                # Attenuation soundness: every link must be a valid narrowing of
-                # its parent — a child that cites a parent but broadens tool /
-                # agent scope / expiry / constraints is rejected (round-6 F3).
-                att = _attenuation_violation(current, parent)
-                if att is not None:
-                    return GateDecision(
-                        False,
-                        f"invalid attenuation of {parent.token_id}: {att}",
-                        token.token_id,
-                        chain,
-                    )
-                chain.append(parent.token_id)
-                current = parent
+            chain_decision = self._verify_ancestor_chain(token, chain)
+            if chain_decision is not None:
+                return chain_decision
 
         return GateDecision(True, "ok", token.token_id, chain)
+
+    def _verify_ancestor_chain(self, token: Capability, chain: list[str]) -> GateDecision | None:
+        """Walk the ancestor chain, verifying each link.
+
+        Returns a DENY GateDecision on the first failure, or None if the
+        entire chain is valid (``chain`` is updated in place).
+        """
+        current = token
+        while current.parent_id:
+            parent = self._resolver(current.parent_id)
+            if parent is None:
+                return GateDecision(
+                    False,
+                    f"unresolved parent {current.parent_id!r}",
+                    token.token_id,
+                    chain,
+                )
+            pem2 = self._issuers.get(parent.key_id)
+            if pem2 is None:
+                return GateDecision(
+                    False,
+                    f"parent {parent.token_id} signed by untrusted key",
+                    token.token_id,
+                    chain,
+                )
+            try:
+                self._verify_signature(parent, pem2)
+            except ValueError as exc:
+                return GateDecision(
+                    False,
+                    f"parent {parent.token_id} bad signature: {exc}",
+                    token.token_id,
+                    chain,
+                )
+            # Revocation must reach the whole ancestor chain, not just the
+            # token's direct parent. Revoking any ancestor denies every
+            # descendant when a resolver is present (REVOKE-DEPTH).
+            if parent.token_id in self._revoked:
+                return GateDecision(
+                    False,
+                    f"ancestor token {parent.token_id} is revoked",
+                    token.token_id,
+                    chain,
+                )
+            # Attenuation soundness: every link must be a valid narrowing of
+            # its parent — a child that cites a parent but broadens tool /
+            # agent scope / expiry / constraints is rejected (round-6 F3).
+            att = _attenuation_violation(current, parent)
+            if att is not None:
+                return GateDecision(
+                    False,
+                    f"invalid attenuation of {parent.token_id}: {att}",
+                    token.token_id,
+                    chain,
+                )
+            chain.append(parent.token_id)
+            current = parent
+        return None
 
     def _check_proof_binding(self, token: Capability) -> GateDecision | None:
         """Gate-time proof enforcement. Returns ``None`` to allow, or a
@@ -1311,26 +1362,10 @@ class CapabilityGate:
             logger.warning("lenient proof mode: %s", msg)
             return None
 
-        if proof.status != "PROVEN":
-            return GateDecision(
-                False,
-                f"proof for {token.policy_proof_hash!r} is {proof.status!r}, not PROVEN",
-                token.token_id,
-            )
-        if token.grammar_hash and token.grammar_hash != proof.grammar_hash:
-            return GateDecision(
-                False,
-                f"token grammar_hash {token.grammar_hash!r} does not match "
-                f"proof grammar_hash {proof.grammar_hash!r}",
-                token.token_id,
-            )
-        if token.policy_hash and token.policy_hash != proof.policy_hash:
-            return GateDecision(
-                False,
-                f"token policy_hash {token.policy_hash!r} does not match "
-                f"proof policy_hash {proof.policy_hash!r}",
-                token.token_id,
-            )
+        mismatch = self._check_proof_hash_mismatch(token, proof)
+        if mismatch is not None:
+            return mismatch
+
         if strict and not (token.grammar_hash and token.policy_hash):
             return GateDecision(
                 False,
@@ -1359,12 +1394,37 @@ class CapabilityGate:
         return None
 
     @staticmethod
+    def _check_proof_hash_mismatch(token: Capability, proof: Any) -> GateDecision | None:
+        """Check proof status and hash binding. Returns a DENY decision or None."""
+        if proof.status != "PROVEN":
+            return GateDecision(
+                False,
+                f"proof for {token.policy_proof_hash!r} is {proof.status!r}, not PROVEN",
+                token.token_id,
+            )
+        if token.grammar_hash and token.grammar_hash != proof.grammar_hash:
+            return GateDecision(
+                False,
+                f"token grammar_hash {token.grammar_hash!r} does not match "
+                f"proof grammar_hash {proof.grammar_hash!r}",
+                token.token_id,
+            )
+        if token.policy_hash and token.policy_hash != proof.policy_hash:
+            return GateDecision(
+                False,
+                f"token policy_hash {token.policy_hash!r} does not match "
+                f"proof policy_hash {proof.policy_hash!r}",
+                token.token_id,
+            )
+        return None
+
+    @staticmethod
     def _verify_signature(token: Capability, pem: str) -> None:
-        serialization, _ed, InvalidSignature = _require_crypto()
+        serialization, _ed, _invalid_sig = _require_crypto()
         pub = serialization.load_pem_public_key(pem.encode("ascii"))
         try:
             pub.verify(_b64d(token.signature), _canonical_json(token.body()))
-        except InvalidSignature as exc:
+        except _invalid_sig as exc:
             raise ValueError(str(exc)) from exc
         except (ValueError, TypeError) as exc:
             # Decode errors (bad base64, malformed key) — fail closed but with
@@ -1440,18 +1500,37 @@ def _check_constraints(c: dict[str, Any], args: dict[str, Any]) -> str | None:
     # check — blacklists deny on ANY contained scalar (exists), positive/bound
     # constraints require ALL contained scalars to satisfy (for-all).
 
-    # forbidden_values — EXISTS_DENY: a present, forbidden scalar anywhere in the
-    # argument (incl. nested in a list/dict, keys included) is a violation.
+    checkers = [
+        _check_forbidden_values,
+        _check_allowed_values,
+        _check_starts_with,
+        _check_max_value,
+        _check_min_value,
+        _check_required_present,
+        _check_forbidden_combinations,
+    ]
+    for checker in checkers:
+        reason = checker(c, args)
+        if reason:
+            return reason
+    return None
+
+
+def _check_forbidden_values(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """forbidden_values — EXISTS_DENY: a present, forbidden scalar anywhere in
+    the argument (incl. nested in a list/dict, keys included) is a violation."""
     for fld, bads in c.get("forbidden_values", {}).items():
         if fld not in args:
             continue
         for scalar in _flatten_scalars(args[fld]):
             if scalar in bads:
                 return f"{fld}={scalar!r} is in forbidden_values"
+    return None
 
-    # allowed_values — FORALL_ALLOW: field MUST be present and EVERY contained
-    # scalar must be in the allowed set. An empty collection carries no checkable
-    # value and is denied (cannot demonstrate the constraint is satisfied).
+
+def _check_allowed_values(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """allowed_values — FORALL_ALLOW: field MUST be present and EVERY contained
+    scalar must be in the allowed set."""
     for fld, oks in c.get("allowed_values", {}).items():
         if fld not in args:
             return f"allowed_values field {fld!r} is absent from the call"
@@ -1461,17 +1540,23 @@ def _check_constraints(c: dict[str, Any], args: dict[str, Any]) -> str | None:
         for scalar in scalars:
             if scalar not in oks:
                 return f"{fld} contains {scalar!r} which is not in allowed_values"
+    return None
 
-    # starts_with — STRING_ONLY: field MUST be present and be a string with the
-    # prefix. Any non-string (including any collection) is denied.
+
+def _check_starts_with(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """starts_with — STRING_ONLY: field MUST be present and be a string with the
+    prefix. Any non-string (including any collection) is denied."""
     for fld, prefix in c.get("starts_with", {}).items():
         if fld not in args:
             return f"starts_with field {fld!r} is absent from the call"
         if not (isinstance(args[fld], str) and args[fld].startswith(prefix)):
             return f"{fld}={args[fld]!r} does not start with {prefix!r}"
+    return None
 
-    # max_value / min_value — FORALL_NUMERIC: field MUST be present and EVERY
-    # contained scalar must be a finite non-bool number satisfying the bound.
+
+def _check_max_value(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """max_value — FORALL_NUMERIC: field MUST be present and EVERY contained
+    scalar must be a finite non-bool number satisfying the upper bound."""
     for fld, bound in c.get("max_value", {}).items():
         if fld not in args:
             return f"max_value field {fld!r} is absent from the call"
@@ -1483,6 +1568,12 @@ def _check_constraints(c: dict[str, Any], args: dict[str, Any]) -> str | None:
                 return f"{fld} contains {scalar!r} which is not a number (max_value)"
             if scalar > bound:
                 return f"{fld} contains {scalar!r} exceeding max_value {bound!r}"
+    return None
+
+
+def _check_min_value(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """min_value — FORALL_NUMERIC: field MUST be present and EVERY contained
+    scalar must be a finite non-bool number satisfying the lower bound."""
     for fld, bound in c.get("min_value", {}).items():
         if fld not in args:
             return f"min_value field {fld!r} is absent from the call"
@@ -1494,12 +1585,20 @@ def _check_constraints(c: dict[str, Any], args: dict[str, Any]) -> str | None:
                 return f"{fld} contains {scalar!r} which is not a number (min_value)"
             if scalar < bound:
                 return f"{fld} contains {scalar!r} below min_value {bound!r}"
+    return None
 
-    # required_present / forbidden_field_combinations — PRESENCE: only the
-    # field's presence matters; the value (collection or not) is irrelevant.
+
+def _check_required_present(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """required_present — PRESENCE: only the field's presence matters."""
     for fld in c.get("required_present", []):
         if fld not in args:
             return f"required field {fld!r} missing"
+    return None
+
+
+def _check_forbidden_combinations(c: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """forbidden_field_combinations — PRESENCE: deny if all fields in a
+    forbidden combination are present."""
     for combo in c.get("forbidden_field_combinations", []):
         if all(c2 in args for c2 in combo):
             return f"forbidden field combination {combo!r} all present"

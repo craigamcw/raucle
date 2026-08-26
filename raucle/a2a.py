@@ -41,6 +41,8 @@ from .provenance import (
 
 RAUCLE_A2A_EXTENSION_URI = "https://raucle.com/spec/a2a/provenance/v1"
 
+_RAUCLE_V1 = "raucle/v1"
+
 #: Sentinel so ``expected_input=None`` (a legitimately empty input) is still
 #: bound, distinct from "no input binding requested".
 _UNSET = object()
@@ -133,8 +135,8 @@ def emit_handoff(
         "alg": _EXPECTED_ALG,
         "typ": _EXPECTED_TYP,
         "kid": identity.key_id,
-        "crit": ["raucle/v1"],
-        "raucle/v1": "provenance",
+        "crit": [_RAUCLE_V1],
+        _RAUCLE_V1: "provenance",
     }
     signing_input = (
         _b64url_encode(_canonical_json(header)) + "." + _b64url_encode(_canonical_json(payload))
@@ -223,9 +225,9 @@ def verify_handoff(
         return HandoffVerdict(False, f"unexpected alg {header.get('alg')!r}")
     if header.get("typ") != _EXPECTED_TYP:
         return HandoffVerdict(False, f"unexpected typ {header.get('typ')!r}")
-    if header.get("crit") != ["raucle/v1"] or header.get("raucle/v1") != "provenance":
+    if header.get("crit") != [_RAUCLE_V1] or header.get(_RAUCLE_V1) != "provenance":
         return HandoffVerdict(False, "receipt is not a Raucle provenance JWS")
-    if set(header) != {"alg", "typ", "kid", "crit", "raucle/v1"}:
+    if set(header) != {"alg", "typ", "kid", "crit", _RAUCLE_V1}:
         return HandoffVerdict(False, "receipt header has unexpected members")
 
     try:

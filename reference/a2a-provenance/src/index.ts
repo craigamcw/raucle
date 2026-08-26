@@ -99,7 +99,7 @@ export interface HandoffInput {
 
 /** Emit a signed `agent_handoff` provenance receipt for an A2A skill call. */
 export async function emitHandoff(opts: HandoffInput): Promise<Receipt> {
-  const h = await sha256Hex(canonicalString((opts.input ?? {}) as never));
+  const h = await sha256Hex(canonicalString(opts.input ?? {}));
   return emit(
     {
       iss: opts.issuer.iss,
@@ -121,7 +121,7 @@ export async function emitHandoff(opts: HandoffInput): Promise<Receipt> {
 /** Attach a hand-off receipt to an outgoing A2A Message. */
 export function attachToMessage<M extends Record<string, unknown>>(message: M, receipt: Receipt): M {
   const exts = new Set([...(((message.extensions as string[]) ?? [])), RAUCLE_A2A_EXTENSION_URI]);
-  const metadata = { ...((message.metadata as Record<string, unknown>) ?? {}) };
+  const metadata = { ...(message.metadata ?? {}) };
   metadata[RAUCLE_A2A_EXTENSION_URI] = { receipt: receipt.jws };
   return { ...message, extensions: [...exts], metadata };
 }
@@ -169,7 +169,7 @@ export async function verifyHandoff(
   } catch (e) {
     return { ok: false, reason: `receipt failed verification: ${(e as Error).message}` };
   }
-  const p = receipt.payload as Record<string, unknown>;
+  const p: Record<string, unknown> = receipt.payload;
   if (p.operation !== "agent_handoff") {
     return { ok: false, reason: `operation is ${String(p.operation)}, expected agent_handoff` };
   }

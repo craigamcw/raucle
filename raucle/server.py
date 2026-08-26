@@ -427,7 +427,7 @@ async def _auth_and_rate_limit(request: Request, call_next):  # type: ignore[no-
 # ---------------------------------------------------------------------------
 
 
-@app.post("/scan", response_model=ScanResponse)
+@app.post("/scan")
 def scan_prompt(req: ScanRequest) -> ScanResponse:
     """Scan a single prompt for injection attacks."""
     start = time.perf_counter()
@@ -437,7 +437,7 @@ def scan_prompt(req: ScanRequest) -> ScanResponse:
     return ScanResponse(**result.to_dict(), scan_time_ms=round(elapsed_ms, 2))
 
 
-@app.post("/scan/batch", response_model=BatchScanResponse)
+@app.post("/scan/batch")
 def scan_batch(req: BatchScanRequest) -> BatchScanResponse:
     """Scan multiple prompts concurrently."""
     if len(req.prompts) > 1000:
@@ -455,7 +455,7 @@ def scan_batch(req: BatchScanRequest) -> BatchScanResponse:
     )
 
 
-@app.post("/scan/output", response_model=ScanResponse)
+@app.post("/scan/output")
 def scan_output(req: OutputScanRequest) -> ScanResponse:
     """Scan LLM output for data leakage, injection, and exfiltration."""
     start = time.perf_counter()
@@ -469,7 +469,7 @@ def scan_output(req: OutputScanRequest) -> ScanResponse:
     return ScanResponse(**result.to_dict(), scan_time_ms=round(elapsed_ms, 2))
 
 
-@app.post("/scan/tool", response_model=ScanResponse)
+@app.post("/scan/tool")
 def scan_tool_call(req: ToolCallScanRequest) -> ScanResponse:
     """Scan tool call arguments for dangerous patterns."""
     start = time.perf_counter()
@@ -489,7 +489,7 @@ def list_rules() -> list[dict[str, Any]]:
     return _scanner.list_rules()
 
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health")
 def health() -> HealthResponse:
     """Health check."""
     return HealthResponse(
@@ -656,7 +656,7 @@ def _iter_audit_events(path: str, replay: int = 50, follow: bool = True):
                 yield frame
 
 
-@app.get("/dashboard")
+@app.get("/dashboard", responses={404: {"description": "Live view disabled"}})
 def dashboard() -> Any:
     """Self-contained live dashboard (SSE-fed)."""
     from fastapi.responses import HTMLResponse
@@ -669,7 +669,7 @@ def dashboard() -> Any:
     return HTMLResponse(_DASHBOARD_HTML)
 
 
-@app.get("/events")
+@app.get("/events", responses={404: {"description": "Live view disabled"}})
 def events(follow: bool = True) -> Any:
     """Server-Sent Events stream of audit events (replays last 50, then live).
 

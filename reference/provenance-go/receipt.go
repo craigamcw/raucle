@@ -19,9 +19,10 @@ import (
 // same content-addressed id ("sha256:" + hex(sha256(jws))).
 
 const (
-	iss    = "raucle-detect/provenance"
-	typ    = "provenance-receipt/v1"
-	jwsTyp = typ
+	iss       = "raucle-detect/provenance"
+	typ       = "provenance-receipt/v1"
+	jwsTyp    = typ
+	critLabel = "raucle/v1"
 )
 
 var validOperations = map[string]bool{
@@ -30,7 +31,7 @@ var validOperations = map[string]bool{
 	"sanitisation": true, "merge": true,
 }
 
-var jwsCrit = []string{"raucle/v1"}
+var jwsCrit = []string{critLabel}
 
 // knownFields is the closed set of payload keys a verifier accepts
 // (plus x_-prefixed extensions). Mirrors the spec §4 field list.
@@ -91,10 +92,20 @@ func (p *Payload) Validate() error {
 	if !validOperations[p.Operation] {
 		return fmt.Errorf("unknown operation: %s", p.Operation)
 	}
+	if err := validateOperationFields(p); err != nil {
+		return err
+	}
+	if err := validateParentRules(p); err != nil {
+		return err
+	}
+	return validateSortedUnique(p)
+}
+
+func validateOperationFields(p *Payload) error {
 	if p.Operation == "guardrail_scan" && p.GuardrailVerdict == "" {
 		return fmt.Errorf("guardrail_scan requires a verdict (§4)")
 	}
-	if (p.Operation == "guardrail_scan") && p.RulesetHash == "" {
+	if p.Operation == "guardrail_scan" && p.RulesetHash == "" {
 		return fmt.Errorf("guardrail_scan requires ruleset_hash (§4)")
 	}
 	if p.Operation == "model_call" && p.Model == "" {
@@ -106,15 +117,23 @@ func (p *Payload) Validate() error {
 	if (p.Operation == "retrieval" || p.Operation == "sanitisation") && p.Corpus == "" {
 		return fmt.Errorf("%s requires corpus (§4)", p.Operation)
 	}
+	return nil
+}
+
+func validateParentRules(p *Payload) error {
 	if p.Operation == "user_input" && len(p.Parents) > 0 {
 		return fmt.Errorf("user_input must have no parents")
 	}
 	if p.Operation != "user_input" && len(p.Parents) == 0 {
 		return fmt.Errorf("%s requires at least one parent", p.Operation)
 	}
-	// §4.2/§4.3.1: parents and taint MUST be sorted in UTF-16 code-unit order
-	// and unique. A strictly-increasing check enforces both at once (a non-
-	// conformant emitter could otherwise sign an unsorted/duplicated array).
+	return nil
+}
+
+// §4.2/§4.3.1: parents and taint MUST be sorted in UTF-16 code-unit order
+// and unique. A strictly-increasing check enforces both at once (a non-
+// conformant emitter could otherwise sign an unsorted/duplicated array).
+func validateSortedUnique(p *Payload) error {
 	for _, f := range []struct {
 		name string
 		vals []string
@@ -131,19 +150,8 @@ func (p *Payload) Validate() error {
 // toMap builds the canonical payload object exactly as Python's
 // ProvenanceReceipt.payload() does. Parents and taint are sorted.
 func (p *Payload) toMap() map[string]any {
-	parents := append([]string(nil), p.Parents...)
-	sort.Slice(parents, func(i, j int) bool { return lessUTF16(parents[i], parents[j]) })
-	taint := append([]string(nil), p.Taint...)
-	sort.Slice(taint, func(i, j int) bool { return lessUTF16(taint[i], taint[j]) })
-
-	parentsAny := make([]any, len(parents))
-	for i, v := range parents {
-		parentsAny[i] = v
-	}
-	taintAny := make([]any, len(taint))
-	for i, v := range taint {
-		taintAny[i] = v
-	}
+	parentsAny := sortedAnySlice(p.Parents)
+	taintAny := sortedAnySlice(p.Taint)
 
 	m := map[string]any{
 		"iss":          iss,
@@ -155,31 +163,33 @@ func (p *Payload) toMap() map[string]any {
 		"parents":      parentsAny,
 		"taint":        taintAny,
 	}
-	if p.InputHash != "" {
-		m["input_hash"] = p.InputHash
-	}
-	if p.OutputHash != "" {
-		m["output_hash"] = p.OutputHash
-	}
-	if p.Model != "" {
-		m["model"] = p.Model
-	}
-	if p.Tool != "" {
-		m["tool"] = p.Tool
-	}
-	if p.Corpus != "" {
-		m["corpus"] = p.Corpus
-	}
-	if p.RulesetHash != "" {
-		m["ruleset_hash"] = p.RulesetHash
-	}
-	if p.GuardrailVerdict != "" {
-		m["guardrail_verdict"] = p.GuardrailVerdict
-	}
+	setOptional(m, "input_hash", p.InputHash)
+	setOptional(m, "output_hash", p.OutputHash)
+	setOptional(m, "model", p.Model)
+	setOptional(m, "tool", p.Tool)
+	setOptional(m, "corpus", p.Corpus)
+	setOptional(m, "ruleset_hash", p.RulesetHash)
+	setOptional(m, "guardrail_verdict", p.GuardrailVerdict)
 	if p.TenantSet {
 		m["tenant"] = p.Tenant
 	}
 	return m
+}
+
+func sortedAnySlice(ss []string) []any {
+	sorted := append([]string(nil), ss...)
+	sort.Slice(sorted, func(i, j int) bool { return lessUTF16(sorted[i], sorted[j]) })
+	out := make([]any, len(sorted))
+	for i, v := range sorted {
+		out[i] = v
+	}
+	return out
+}
+
+func setOptional(m map[string]any, key, value string) {
+	if value != "" {
+		m[key] = value
+	}
 }
 
 func payloadFromMap(m map[string]any) (Payload, error) {
@@ -218,21 +228,23 @@ func payloadFromMap(m map[string]any) (Payload, error) {
 			p.Tenant = s
 		}
 	}
-	if arr, ok := m["parents"].([]any); ok {
-		for _, e := range arr {
-			if s, ok := e.(string); ok {
-				p.Parents = append(p.Parents, s)
-			}
-		}
-	}
-	if arr, ok := m["taint"].([]any); ok {
-		for _, e := range arr {
-			if s, ok := e.(string); ok {
-				p.Taint = append(p.Taint, s)
-			}
-		}
-	}
+	p.Parents = stringSliceFromAny(m["parents"])
+	p.Taint = stringSliceFromAny(m["taint"])
 	return p, nil
+}
+
+func stringSliceFromAny(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, e := range arr {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // PayloadFromHarness builds a Payload from a decoded JSON object as used
@@ -253,7 +265,7 @@ func Emit(p Payload, priv ed25519.PrivateKey) (Receipt, error) {
 		"typ":       jwsTyp,
 		"kid":       p.AgentKeyID,
 		"crit":      toAnySlice(jwsCrit),
-		"raucle/v1": "provenance",
+		critLabel:   "provenance",
 	}
 	headerB, err := canonicalEncode(header)
 	if err != nil {
@@ -285,34 +297,8 @@ func Verify(jws string, pub ed25519.PublicKey) (Receipt, error) {
 	if err := json.Unmarshal(hb, &header); err != nil {
 		return Receipt{}, err
 	}
-	if header["alg"] != "EdDSA" {
-		return Receipt{}, fmt.Errorf("unsupported alg: %v", header["alg"])
-	}
-	if header["typ"] != jwsTyp {
-		return Receipt{}, fmt.Errorf("unexpected typ: %v", header["typ"])
-	}
-	crit, ok := header["crit"].([]any)
-	if !ok || len(crit) != 1 || crit[0] != "raucle/v1" {
-		return Receipt{}, fmt.Errorf("crit must be exactly ['raucle/v1']")
-	}
-	if header["raucle/v1"] != "provenance" {
-		return Receipt{}, fmt.Errorf("header 'raucle/v1' must be 'provenance'")
-	}
-	allowedHeaderKeys := map[string]bool{"alg": true, "typ": true, "kid": true, "crit": true, "raucle/v1": true}
-	for k := range header {
-		if !allowedHeaderKeys[k] {
-			return Receipt{}, fmt.Errorf("unexpected JOSE header key: %s", k)
-		}
-	}
-
-	// Canonical byte-equality (spec v1 §4.3, matches the Python reference): the
-	// signature binds the on-wire bytes, but without re-encoding and comparing,
-	// a non-canonical header (unsorted keys / extra whitespace) would still
-	// verify, admitting byte-different receipts for the same logical content.
-	if canonHeader, cerr := canonicalEncode(header); cerr != nil {
-		return Receipt{}, cerr
-	} else if !bytes.Equal(canonHeader, hb) {
-		return Receipt{}, fmt.Errorf("JOSE header is not canonical JSON (JCS)")
+	if err := validateHeader(header, hb); err != nil {
+		return Receipt{}, err
 	}
 
 	sig, err := b64uDecode(sigB)
@@ -323,30 +309,70 @@ func Verify(jws string, pub ed25519.PublicKey) (Receipt, error) {
 		return Receipt{}, fmt.Errorf("signature invalid")
 	}
 
-	pb, err := b64uDecode(payloadB)
+	p, err := decodePayload(payloadB)
 	if err != nil {
-		return Receipt{}, err
-	}
-	var pm map[string]any
-	if err := json.Unmarshal(pb, &pm); err != nil {
-		return Receipt{}, err
-	}
-	if canonPayload, cerr := canonicalEncode(pm); cerr != nil {
-		return Receipt{}, cerr
-	} else if !bytes.Equal(canonPayload, pb) {
-		return Receipt{}, fmt.Errorf("JWS payload is not canonical JSON (JCS)")
-	}
-	p, err := payloadFromMap(pm)
-	if err != nil {
-		return Receipt{}, err
-	}
-	if err := p.Validate(); err != nil {
 		return Receipt{}, err
 	}
 	if header["kid"] != p.AgentKeyID {
 		return Receipt{}, fmt.Errorf("header.kid != payload.agent_key_id (§3)")
 	}
 	return Receipt{JWS: jws, Payload: p, ID: "sha256:" + sha256Hex([]byte(jws))}, nil
+}
+
+func validateHeader(header map[string]any, hb []byte) error {
+	if header["alg"] != "EdDSA" {
+		return fmt.Errorf("unsupported alg: %v", header["alg"])
+	}
+	if header["typ"] != jwsTyp {
+		return fmt.Errorf("unexpected typ: %v", header["typ"])
+	}
+	crit, ok := header["crit"].([]any)
+	if !ok || len(crit) != 1 || crit[0] != critLabel {
+		return fmt.Errorf("crit must be exactly ['raucle/v1']")
+	}
+	if header[critLabel] != "provenance" {
+		return fmt.Errorf("header 'raucle/v1' must be 'provenance'")
+	}
+	allowedHeaderKeys := map[string]bool{"alg": true, "typ": true, "kid": true, "crit": true, critLabel: true}
+	for k := range header {
+		if !allowedHeaderKeys[k] {
+			return fmt.Errorf("unexpected JOSE header key: %s", k)
+		}
+	}
+	// Canonical byte-equality (spec v1 §4.3, matches the Python reference): the
+	// signature binds the on-wire bytes, but without re-encoding and comparing,
+	// a non-canonical header (unsorted keys / extra whitespace) would still
+	// verify, admitting byte-different receipts for the same logical content.
+	if canonHeader, cerr := canonicalEncode(header); cerr != nil {
+		return cerr
+	} else if !bytes.Equal(canonHeader, hb) {
+		return fmt.Errorf("JOSE header is not canonical JSON (JCS)")
+	}
+	return nil
+}
+
+func decodePayload(payloadB string) (Payload, error) {
+	pb, err := b64uDecode(payloadB)
+	if err != nil {
+		return Payload{}, err
+	}
+	var pm map[string]any
+	if err := json.Unmarshal(pb, &pm); err != nil {
+		return Payload{}, err
+	}
+	if canonPayload, cerr := canonicalEncode(pm); cerr != nil {
+		return Payload{}, cerr
+	} else if !bytes.Equal(canonPayload, pb) {
+		return Payload{}, fmt.Errorf("JWS payload is not canonical JSON (JCS)")
+	}
+	p, err := payloadFromMap(pm)
+	if err != nil {
+		return Payload{}, err
+	}
+	if err := p.Validate(); err != nil {
+		return Payload{}, err
+	}
+	return p, nil
 }
 
 // ── small helpers ─────────────────────────────────────────────────

@@ -45,6 +45,7 @@ from typing import Any
 
 from ._canon import utf16_key as _u16  # UTF-16 ordering for signed value lists
 
+_RAUCLE_V1 = "raucle/v1"
 logger = logging.getLogger(__name__)
 
 
@@ -120,7 +121,7 @@ class VerdictSigner:
             # cannot produce verifiable receipts. Surface, don't swallow.
             from raucle.errors import ConfigurationError
 
-            logger.error("VerdictSigner: failed to extract public key bytes: %s", exc)
+            logger.exception("VerdictSigner: failed to extract public key bytes: %s", exc)
             raise ConfigurationError(
                 f"VerdictSigner: failed to extract public key bytes: {exc}"
             ) from exc
@@ -169,8 +170,8 @@ class VerdictSigner:
             "alg": "EdDSA",
             "typ": "raucle-receipt/v1",
             "kid": self.key_id(),
-            "crit": ["raucle/v1"],
-            "raucle/v1": "verdict",
+            "crit": [_RAUCLE_V1],
+            _RAUCLE_V1: "verdict",
         }
         payload: dict[str, Any] = {
             "iss": "raucle",
@@ -278,7 +279,7 @@ class VerdictVerifier:
         if header.get("typ") != "raucle-receipt/v1":
             raise VerdictVerificationError(f"unexpected typ: {header.get('typ')!r}")
         crit = header.get("crit") or []
-        if "raucle/v1" not in crit:
+        if _RAUCLE_V1 not in crit:
             raise VerdictVerificationError("crit must include 'raucle/v1'")
 
         # Signature

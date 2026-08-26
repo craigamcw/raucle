@@ -82,7 +82,7 @@ function b64uEncode(bytes: Uint8Array): string {
 
 function b64uDecode(s: string): Uint8Array<ArrayBuffer> {
   const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4))
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + pad
+  const b64 = s.replaceAll('-', '+').replaceAll('_', '/') + pad
   const buf = Buffer.from(b64, 'base64')
   const out = new Uint8Array(buf.length)
   out.set(buf)
@@ -125,22 +125,8 @@ export function validatePayload(p: ReceiptPayload): void {
     throw new Error(`unknown operation: ${p.operation}`)
   }
   const has = (k: keyof ReceiptPayload) =>
-    typeof p[k] === 'string' && (p[k] as string).length > 0
-  if (p.operation === 'guardrail_scan' && !has('guardrail_verdict')) {
-    throw new Error('guardrail_scan requires guardrail_verdict (§4)')
-  }
-  if (p.operation === 'guardrail_scan' && !has('ruleset_hash')) {
-    throw new Error('guardrail_scan requires ruleset_hash (§4)')
-  }
-  if (p.operation === 'model_call' && !has('model')) {
-    throw new Error('model_call requires model (§4)')
-  }
-  if ((p.operation === 'tool_call' || p.operation === 'sanitisation') && !has('tool')) {
-    throw new Error(`${p.operation} requires tool (§4)`)
-  }
-  if ((p.operation === 'retrieval' || p.operation === 'sanitisation') && !has('corpus')) {
-    throw new Error(`${p.operation} requires corpus (§4)`)
-  }
+    typeof p[k] === 'string' && p[k].length > 0
+  validateOperationFields(p, has)
   if (p.operation === 'user_input' && p.parents.length > 0) {
     throw new Error('user_input must have no parents')
   }
@@ -159,6 +145,27 @@ export function validatePayload(p: ReceiptPayload): void {
         )
       }
     }
+  }
+}
+
+function validateOperationFields(
+  p: ReceiptPayload,
+  has: (k: keyof ReceiptPayload) => boolean,
+): void {
+  if (p.operation === 'guardrail_scan' && !has('guardrail_verdict')) {
+    throw new Error('guardrail_scan requires guardrail_verdict (§4)')
+  }
+  if (p.operation === 'guardrail_scan' && !has('ruleset_hash')) {
+    throw new Error('guardrail_scan requires ruleset_hash (§4)')
+  }
+  if (p.operation === 'model_call' && !has('model')) {
+    throw new Error('model_call requires model (§4)')
+  }
+  if ((p.operation === 'tool_call' || p.operation === 'sanitisation') && !has('tool')) {
+    throw new Error(`${p.operation} requires tool (§4)`)
+  }
+  if ((p.operation === 'retrieval' || p.operation === 'sanitisation') && !has('corpus')) {
+    throw new Error(`${p.operation} requires corpus (§4)`)
   }
 }
 

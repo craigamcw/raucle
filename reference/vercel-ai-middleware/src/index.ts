@@ -47,37 +47,91 @@ export function evaluatePolicy(
 ): GateVerdict {
   if (!policy) return { decision: "ALLOW" };
 
+  const required = checkRequiredPresent(policy, args);
+  if (required) return required;
+  const allowed = checkAllowedValues(policy, args);
+  if (allowed) return allowed;
+  const forbidden = checkForbiddenValues(policy, args);
+  if (forbidden) return forbidden;
+  const max = checkMaxValue(policy, args);
+  if (max) return max;
+  const min = checkMinValue(policy, args);
+  if (min) return min;
+  const combos = checkForbiddenCombos(policy, args);
+  if (combos) return combos;
+  return { decision: "ALLOW" };
+}
+
+function checkRequiredPresent(
+  policy: ConstraintPolicy,
+  args: Record<string, unknown>,
+): GateVerdict | undefined {
   for (const f of policy.requiredPresent ?? []) {
     if (args[f] === undefined || args[f] === null) {
       return { decision: "BLOCK", reason: `required field '${f}' missing` };
     }
   }
+  return undefined;
+}
+
+function checkAllowedValues(
+  policy: ConstraintPolicy,
+  args: Record<string, unknown>,
+): GateVerdict | undefined {
   for (const [f, allowed] of Object.entries(policy.allowedValues ?? {})) {
     if (f in args && !allowed.includes(args[f] as string | number)) {
       return { decision: "BLOCK", reason: `${f}=${String(args[f])} not in allowed set` };
     }
   }
+  return undefined;
+}
+
+function checkForbiddenValues(
+  policy: ConstraintPolicy,
+  args: Record<string, unknown>,
+): GateVerdict | undefined {
   for (const [f, forbidden] of Object.entries(policy.forbiddenValues ?? {})) {
     if (f in args && forbidden.includes(args[f] as string | number)) {
       return { decision: "BLOCK", reason: `${f}=${String(args[f])} is forbidden` };
     }
   }
+  return undefined;
+}
+
+function checkMaxValue(
+  policy: ConstraintPolicy,
+  args: Record<string, unknown>,
+): GateVerdict | undefined {
   for (const [f, max] of Object.entries(policy.maxValue ?? {})) {
-    if (f in args && typeof args[f] === "number" && (args[f] as number) > max) {
+    if (f in args && typeof args[f] === "number" && args[f] > max) {
       return { decision: "BLOCK", reason: `${f}=${String(args[f])} exceeds max ${max}` };
     }
   }
+  return undefined;
+}
+
+function checkMinValue(
+  policy: ConstraintPolicy,
+  args: Record<string, unknown>,
+): GateVerdict | undefined {
   for (const [f, min] of Object.entries(policy.minValue ?? {})) {
-    if (f in args && typeof args[f] === "number" && (args[f] as number) < min) {
+    if (f in args && typeof args[f] === "number" && args[f] < min) {
       return { decision: "BLOCK", reason: `${f}=${String(args[f])} below min ${min}` };
     }
   }
+  return undefined;
+}
+
+function checkForbiddenCombos(
+  policy: ConstraintPolicy,
+  args: Record<string, unknown>,
+): GateVerdict | undefined {
   for (const [a, b] of policy.forbiddenFieldCombinations ?? []) {
     if (a in args && b in args) {
       return { decision: "BLOCK", reason: `fields '${a}' and '${b}' must not co-occur` };
     }
   }
-  return { decision: "ALLOW" };
+  return undefined;
 }
 
 // ── Vercel AI SDK tool shape (structural — no hard dep on `ai`) ─────
@@ -86,7 +140,6 @@ export interface VercelTool {
   description?: string;
   parameters?: unknown;
   execute?: (args: any, options?: any) => unknown | Promise<unknown>;
-  [k: string]: unknown;
 }
 
 export class RauclePolicyDenied extends Error {

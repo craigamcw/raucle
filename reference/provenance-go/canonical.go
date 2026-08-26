@@ -49,19 +49,32 @@ func RejectLoneSurrogatesRaw(raw []byte) error {
 		if !ok {
 			continue
 		}
-		if cu >= 0xD800 && cu <= 0xDBFF { // high surrogate
-			if lo, ok := parseHex4(i + 6); ok && lo >= 0xDC00 && lo <= 0xDFFF {
-				i += 11 // consume both escapes of a valid pair
-				continue
-			}
-			return fmt.Errorf("canonical-JSON: lone surrogate U+%04X is not permitted in v1 signed/hashed material", cu)
+		next, consumed, err := checkSurrogate(cu, parseHex4, i)
+		if err != nil {
+			return err
 		}
-		if cu >= 0xDC00 && cu <= 0xDFFF { // low surrogate with no preceding high
-			return fmt.Errorf("canonical-JSON: lone surrogate U+%04X is not permitted in v1 signed/hashed material", cu)
+		i += consumed
+		if next {
+			continue
 		}
-		i += 5 // consume a non-surrogate \uXXXX escape
 	}
 	return nil
+}
+
+// checkSurrogate inspects a parsed \uXXXX code unit and returns whether to
+// continue the loop, how many extra bytes to consume, or an error for a lone
+// surrogate.
+func checkSurrogate(cu uint16, parseHex4 func(int) (uint16, bool), i int) (continueLoop bool, consumed int, err error) {
+	if cu >= 0xD800 && cu <= 0xDBFF { // high surrogate
+		if lo, ok := parseHex4(i + 6); ok && lo >= 0xDC00 && lo <= 0xDFFF {
+			return true, 11, nil // consume both escapes of a valid pair
+		}
+		return false, 0, fmt.Errorf("canonical-JSON: lone surrogate U+%04X is not permitted in v1 signed/hashed material", cu)
+	}
+	if cu >= 0xDC00 && cu <= 0xDFFF { // low surrogate with no preceding high
+		return false, 0, fmt.Errorf("canonical-JSON: lone surrogate U+%04X is not permitted in v1 signed/hashed material", cu)
+	}
+	return false, 5, nil // consume a non-surrogate \uXXXX escape
 }
 
 // lessUTF16 orders two strings by UTF-16 code unit (RFC 8785 / JCS §3.2.3),
@@ -120,11 +133,7 @@ func canonicalWrite(sb *strings.Builder, v any) error {
 	case nil:
 		sb.WriteString("null")
 	case bool:
-		if t {
-			sb.WriteString("true")
-		} else {
-			sb.WriteString("false")
-		}
+		writeBool(sb, t)
 	case int:
 		if !safeInt(int64(t)) {
 			return errSafeInt
@@ -136,58 +145,91 @@ func canonicalWrite(sb *strings.Builder, v any) error {
 		}
 		sb.WriteString(strconv.FormatInt(t, 10))
 	case float64:
-		// JSON unmarshalling yields float64 even for integers, so accept
-		// a float64 only when it is integral.
-		if t != float64(int64(t)) {
-			return errors.New("canonical-JSON: non-integer numbers are not supported in v1")
+		if err := writeFloat(sb, t); err != nil {
+			return err
 		}
-		if !safeInt(int64(t)) {
-			return errSafeInt
-		}
-		sb.WriteString(strconv.FormatInt(int64(t), 10))
 	case string:
 		sb.WriteString(encodeJSONString(t))
 	case []string:
-		sb.WriteByte('[')
-		for i, e := range t {
-			if i > 0 {
-				sb.WriteByte(',')
-			}
-			sb.WriteString(encodeJSONString(e))
-		}
-		sb.WriteByte(']')
+		writeStringSlice(sb, t)
 	case []any:
-		sb.WriteByte('[')
-		for i, e := range t {
-			if i > 0 {
-				sb.WriteByte(',')
-			}
-			if err := canonicalWrite(sb, e); err != nil {
-				return err
-			}
+		if err := writeAnySlice(sb, t); err != nil {
+			return err
 		}
-		sb.WriteByte(']')
 	case map[string]any:
-		keys := make([]string, 0, len(t))
-		for k := range t {
-			keys = append(keys, k)
+		if err := writeMap(sb, t); err != nil {
+			return err
 		}
-		sort.Slice(keys, func(i, j int) bool { return lessUTF16(keys[i], keys[j]) })
-		sb.WriteByte('{')
-		for i, k := range keys {
-			if i > 0 {
-				sb.WriteByte(',')
-			}
-			sb.WriteString(encodeJSONString(k))
-			sb.WriteByte(':')
-			if err := canonicalWrite(sb, t[k]); err != nil {
-				return err
-			}
-		}
-		sb.WriteByte('}')
 	default:
 		return fmt.Errorf("canonical-JSON: unsupported type %T", v)
 	}
+	return nil
+}
+
+func writeBool(sb *strings.Builder, b bool) {
+	if b {
+		sb.WriteString("true")
+	} else {
+		sb.WriteString("false")
+	}
+}
+
+func writeFloat(sb *strings.Builder, t float64) error {
+	// JSON unmarshalling yields float64 even for integers, so accept
+	// a float64 only when it is integral.
+	if t != float64(int64(t)) {
+		return errors.New("canonical-JSON: non-integer numbers are not supported in v1")
+	}
+	if !safeInt(int64(t)) {
+		return errSafeInt
+	}
+	sb.WriteString(strconv.FormatInt(int64(t), 10))
+	return nil
+}
+
+func writeStringSlice(sb *strings.Builder, t []string) {
+	sb.WriteByte('[')
+	for i, e := range t {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(encodeJSONString(e))
+	}
+	sb.WriteByte(']')
+}
+
+func writeAnySlice(sb *strings.Builder, t []any) error {
+	sb.WriteByte('[')
+	for i, e := range t {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		if err := canonicalWrite(sb, e); err != nil {
+			return err
+		}
+	}
+	sb.WriteByte(']')
+	return nil
+}
+
+func writeMap(sb *strings.Builder, t map[string]any) error {
+	keys := make([]string, 0, len(t))
+	for k := range t {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return lessUTF16(keys[i], keys[j]) })
+	sb.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(encodeJSONString(k))
+		sb.WriteByte(':')
+		if err := canonicalWrite(sb, t[k]); err != nil {
+			return err
+		}
+	}
+	sb.WriteByte('}')
 	return nil
 }
 

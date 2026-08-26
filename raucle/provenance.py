@@ -240,6 +240,7 @@ def _b64url_decode(data: str) -> bytes:
 #: (or lossy) in the TS port — a cross-language canonical divergence (§8.10 #6).
 _MAX_SAFE_INT = 2**53 - 1
 _MIN_SAFE_INT = -(2**53 - 1)
+_SHA256_PREFIX = "sha256:"
 
 
 def _reject_floats(obj: Any) -> None:
@@ -319,12 +320,12 @@ _reject_duplicate_keys = _make_duplicate_key_rejecter("JSON object")
 
 def hash_text(text: str) -> str:
     """Hash an input or output string for receipt inclusion."""
-    return "sha256:" + _sha256_hex(text.encode("utf-8"))
+    return _SHA256_PREFIX + _sha256_hex(text.encode("utf-8"))
 
 
 def hash_obj(obj: Any) -> str:
     """Hash an arbitrary JSON-serialisable object for receipt inclusion."""
-    return "sha256:" + _sha256_hex(_canonical_json(obj))
+    return _SHA256_PREFIX + _sha256_hex(_canonical_json(obj))
 
 
 # Mirror the hardened capability gate grammar: dots must sit between
@@ -344,6 +345,78 @@ def _validate_agent_id(agent_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Agent identity + capability statement
 # ---------------------------------------------------------------------------
+
+
+_CAP_STMT_KNOWN_FIELDS = frozenset(
+    {
+        "agent_id",
+        "key_id",
+        "public_key_pem",
+        "allowed_models",
+        "allowed_tools",
+        "data_classifications",
+        "sanitisation_authority",
+        "issuer",
+        "issued_at",
+        "expires_at",
+        "signature",
+    }
+)
+
+
+def _cap_stmt_req_str(d: dict[str, Any], name: str) -> str:
+    v = d.get(name)
+    if not isinstance(v, str) or not v:
+        raise ValueError(
+            f"capability statement: {name} must be a non-empty string, got {type(v).__name__} {v!r}"
+        )
+    return v
+
+
+def _cap_stmt_opt_str(d: dict[str, Any], name: str) -> str:
+    v = d.get(name, "")
+    if v is not None and not isinstance(v, str):
+        raise ValueError(
+            f"capability statement: {name} must be a string or absent, got {type(v).__name__} {v!r}"
+        )
+    return v if v is not None else ""
+
+
+def _cap_stmt_opt_int(d: dict[str, Any], name: str, default: int = 0) -> int:
+    v = d.get(name, default)
+    if v is None:
+        return default
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise ValueError(
+            f"capability statement: {name} must be an integer, got {type(v).__name__} {v!r}"
+        )
+    return v
+
+
+def _cap_stmt_opt_int_or_none(d: dict[str, Any], name: str) -> int | None:
+    v = d.get(name)
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise ValueError(
+            f"capability statement: {name} must be an integer or null, got {type(v).__name__} {v!r}"
+        )
+    return v
+
+
+def _cap_stmt_opt_str_list(d: dict[str, Any], name: str) -> list[str]:
+    v = d.get(name, [])
+    if not isinstance(v, list):
+        raise ValueError(
+            f"capability statement: {name} must be a list, got {type(v).__name__} {v!r}"
+        )
+    for item in v:
+        if not isinstance(item, str):
+            raise ValueError(
+                f"capability statement: {name} must be a list of strings, "
+                f"got {type(item).__name__} {item!r}"
+            )
+    return v
 
 
 @dataclass
@@ -407,96 +480,25 @@ class CapabilityStatement:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CapabilityStatement:
-        # The statement must be a JSON object; a non-object is invalid signed
-        # material and must fail closed with a ValueError, not a TypeError from
-        # cls(**d) on a non-mapping.
         if not isinstance(d, dict):
             raise ValueError(f"capability statement: must be a JSON object, got {type(d).__name__}")
 
-        def _req_str(name: str) -> str:
-            v = d.get(name)
-            if not isinstance(v, str) or not v:
-                raise ValueError(
-                    f"capability statement: {name} must be a non-empty string, "
-                    f"got {type(v).__name__} {v!r}"
-                )
-            return v
-
-        def _opt_str(name: str) -> str:
-            v = d.get(name, "")
-            if v is not None and not isinstance(v, str):
-                raise ValueError(
-                    f"capability statement: {name} must be a string or absent, "
-                    f"got {type(v).__name__} {v!r}"
-                )
-            return v if v is not None else ""
-
-        def _opt_int(name: str, default: int = 0) -> int:
-            v = d.get(name, default)
-            if v is None:
-                return default
-            if isinstance(v, bool) or not isinstance(v, int):
-                raise ValueError(
-                    f"capability statement: {name} must be an integer, got {type(v).__name__} {v!r}"
-                )
-            return v
-
-        def _opt_int_or_none(name: str) -> int | None:
-            v = d.get(name)
-            if v is None:
-                return None
-            if isinstance(v, bool) or not isinstance(v, int):
-                raise ValueError(
-                    f"capability statement: {name} must be an integer or null, "
-                    f"got {type(v).__name__} {v!r}"
-                )
-            return v
-
-        def _opt_str_list(name: str) -> list[str]:
-            v = d.get(name, [])
-            if not isinstance(v, list):
-                raise ValueError(
-                    f"capability statement: {name} must be a list, got {type(v).__name__} {v!r}"
-                )
-            for item in v:
-                if not isinstance(item, str):
-                    raise ValueError(
-                        f"capability statement: {name} must be a list of strings, "
-                        f"got {type(item).__name__} {item!r}"
-                    )
-            return v
-
-        # Reject unknown keys so a crafted statement can't smuggle extra fields
-        # past the parser (defence in depth at the trust boundary).
-        known = {
-            "agent_id",
-            "key_id",
-            "public_key_pem",
-            "allowed_models",
-            "allowed_tools",
-            "data_classifications",
-            "sanitisation_authority",
-            "issuer",
-            "issued_at",
-            "expires_at",
-            "signature",
-        }
-        unknown = set(d) - known
+        unknown = set(d) - _CAP_STMT_KNOWN_FIELDS
         if unknown:
             raise ValueError(f"capability statement: unknown field(s) {sorted(unknown)}")
 
         return cls(
-            agent_id=_req_str("agent_id"),
-            key_id=_req_str("key_id"),
-            public_key_pem=_req_str("public_key_pem"),
-            allowed_models=_opt_str_list("allowed_models"),
-            allowed_tools=_opt_str_list("allowed_tools"),
-            data_classifications=_opt_str_list("data_classifications"),
-            sanitisation_authority=_opt_str_list("sanitisation_authority"),
-            issuer=_req_str("issuer"),
-            issued_at=_opt_int("issued_at"),
-            expires_at=_opt_int_or_none("expires_at"),
-            signature=_opt_str("signature"),
+            agent_id=_cap_stmt_req_str(d, "agent_id"),
+            key_id=_cap_stmt_req_str(d, "key_id"),
+            public_key_pem=_cap_stmt_req_str(d, "public_key_pem"),
+            allowed_models=_cap_stmt_opt_str_list(d, "allowed_models"),
+            allowed_tools=_cap_stmt_opt_str_list(d, "allowed_tools"),
+            data_classifications=_cap_stmt_opt_str_list(d, "data_classifications"),
+            sanitisation_authority=_cap_stmt_opt_str_list(d, "sanitisation_authority"),
+            issuer=_cap_stmt_req_str(d, "issuer"),
+            issued_at=_cap_stmt_opt_int(d, "issued_at"),
+            expires_at=_cap_stmt_opt_int_or_none(d, "expires_at"),
+            signature=_cap_stmt_opt_str(d, "signature"),
         )
 
     def permits_model(self, model: str) -> bool:
@@ -711,7 +713,7 @@ class ProvenanceReceipt:
         ).encode("ascii")
         sig = identity.sign(signing_input)
         self.jws = signing_input.decode("ascii") + "." + _b64url_encode(sig)
-        self.receipt_hash = "sha256:" + _sha256_hex(self.jws.encode("ascii"))
+        self.receipt_hash = _SHA256_PREFIX + _sha256_hex(self.jws.encode("ascii"))
         return self.jws
 
     def to_jws(self) -> str:
@@ -803,7 +805,7 @@ class ProvenanceReceipt:
             issued_at=payload.get("iat", 0),
         )
         receipt.jws = jws
-        receipt.receipt_hash = "sha256:" + _sha256_hex(jws.encode("ascii"))
+        receipt.receipt_hash = _SHA256_PREFIX + _sha256_hex(jws.encode("ascii"))
         # §3.3: a strict standalone parse is also structurally validated, so a
         # malformed receipt (bad root rule, missing required field, unsorted
         # parents/taint) is rejected here rather than silently parsing. The
@@ -966,7 +968,7 @@ class ProvenanceLogger:
                     receipt = ProvenanceReceipt.from_jws(jws)
                     if receipt.receipt_hash:
                         self._taint_by_hash[receipt.receipt_hash] = set(receipt.taint)
-                except (json.JSONDecodeError, KeyError, ValueError):
+                except (ValueError, KeyError):
                     continue
 
     # ------------------------------------------------------------------
@@ -1353,7 +1355,7 @@ class ProvenanceVerifier:
                     extra = _registry.unknown_envelope_fields(set(raw))
                     if extra:
                         raise ValueError(f"unknown envelope field(s): {sorted(extra)}")
-                    # validate_structure=False: the chain verifier reports each
+                    # With validate_structure disabled: the chain verifier reports each
                     # structural error per-line below (via _structural_errors)
                     # rather than raising on the first, so callers see the full
                     # set of problems in one report.
@@ -1644,7 +1646,7 @@ class ProvenanceVerifier:
                 try:
                     raw = json.loads(line)
                     r = ProvenanceReceipt.from_jws(raw["jws"])
-                except (json.JSONDecodeError, ValueError, KeyError):
+                except (ValueError, KeyError):
                     continue
                 out[r.receipt_hash] = r
         return out

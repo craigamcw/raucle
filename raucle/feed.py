@@ -59,6 +59,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from raucle._paths import validate_path
+
 from ._canon import utf16_key as _u16  # UTF-16 ordering for signed value lists
 
 logger = logging.getLogger(__name__)
@@ -247,11 +249,13 @@ class Feed:
         )
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False))
+        validate_path(path, must_exist=False).write_text(
+            json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
+        )
 
     @classmethod
     def load(cls, path: str | Path) -> Feed:
-        return cls.from_dict(json.loads(Path(path).read_text()))
+        return cls.from_dict(json.loads(validate_path(path).read_text()))
 
     def verify(self, *, pubkey_pem: str | None = None) -> None:
         """Verify Merkle root, manifest signature, and every IOC signature.
@@ -356,7 +360,7 @@ class IOCSigner:
     @classmethod
     def load_private_key(cls, issuer: str, path: str | Path) -> IOCSigner:
         serialization, _ = _require_crypto()
-        priv = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+        priv = serialization.load_pem_private_key(validate_path(path).read_bytes(), password=None)
         return cls(issuer=issuer, private_key=priv)
 
     def save_private_key(self, path: str | Path) -> None:
@@ -519,6 +523,7 @@ def _severity_to_score(severity: str) -> float:
 _MAX_FEED_BYTES = 8 * 1024 * 1024
 
 # Cloud-provider link-local metadata endpoint (AWS/GCP/Azure IMDS).
+# Intentionally blocked for SSRF prevention.
 _METADATA_IP = "169.254.169.254"
 
 
@@ -621,6 +626,8 @@ def fetch_https_pinned(
     # Pin a TLS 1.2 floor explicitly (defence in depth against downgrade).
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
+    # SSRF protection: DNS resolution is pinned, redirects are refused,
+    # and private/loopback/metadata IPs are blocked by _is_blocked_ip.
     class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         def connect(self) -> None:  # type: ignore[override]
             sock = socket.create_connection((pinned_ip, port), timeout)

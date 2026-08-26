@@ -168,31 +168,12 @@ def _card_meta(card: dict[str, Any]) -> dict[str, Any] | None:
     return (card.get("metadata") or {}).get(RAUCLE_A2A_EXTENSION_URI)
 
 
-def verify_handoff(
-    receipt_jws: str,
-    caller_card: dict[str, Any],
-    callee_card: dict[str, Any],
-    *,
-    expected_input: Any = _UNSET,
-    seen_receipt_ids: set[str] | None = None,
-) -> HandoffVerdict:
-    """Verify a hand-off receipt **offline** against the *caller's* published key
-    and confirm it authorises this call on *this* (callee) card. No network.
+def _verify_jws_signature(
+    receipt_jws: str, caller_card: dict[str, Any]
+) -> HandoffVerdict | tuple[str, str, str]:
+    """Extract the caller key, verify the JWS signature.
 
-    Checks: caller key present → JOSE header is canonical with the expected
-    ``alg``/``typ``/``crit``/``raucle/v1`` and ``kid`` bound to ``agent_key_id`` →
-    signature valid → payload is canonical (§6) → ``operation == agent_handoff`` →
-    target matches this agent's URL → skill is advertised → if the callee binds
-    the skill to a capability hash, the receipt must cite it.
-
-    Binding the call (anti-replay / anti-substitution): pass ``expected_input`` —
-    the exact skill input this callee is about to execute — and the receipt's
-    ``input_hash`` must match it, so a receipt signed for one call cannot be
-    replayed against a different input. For replay of the *same* input, pass a
-    ``seen_receipt_ids`` set the callee persists; a receipt id seen before is
-    rejected (idempotency). A caller-key swap is out of scope: ``caller_card``
-    must be authenticated/pinned out of band (A2A discovery), which this helper
-    assumes — it cannot detect a forged card.
+    Returns ``(header_b64, payload_b64, sig_b64)`` on success, or a HandoffVerdict on failure.
     """
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -212,9 +193,11 @@ def verify_handoff(
         pub.verify(_b64url_decode(sig_b64), signing_input)
     except (InvalidSignature, ValueError):
         return HandoffVerdict(False, "receipt signature did not verify against caller key")
+    return header_b64, payload_b64, sig_b64
 
-    # JOSE header: must be canonical (catches duplicate keys) and exactly the
-    # Raucle provenance profile — a signed but non-profile JWS is not a receipt.
+
+def _verify_jose_header(header_b64: str) -> HandoffVerdict | dict[str, Any]:
+    """Parse and validate the JOSE header. Returns the header dict or a failure verdict."""
     try:
         header = json.loads(_b64url_decode(header_b64))
     except (ValueError, TypeError):
@@ -229,7 +212,13 @@ def verify_handoff(
         return HandoffVerdict(False, "receipt is not a Raucle provenance JWS")
     if set(header) != {"alg", "typ", "kid", "crit", _RAUCLE_V1}:
         return HandoffVerdict(False, "receipt header has unexpected members")
+    return header
 
+
+def _verify_jws_payload(
+    payload_b64: str, header: dict[str, Any]
+) -> HandoffVerdict | dict[str, Any]:
+    """Parse and validate the JWS payload. Returns the payload dict or a failure verdict."""
     try:
         payload = json.loads(_b64url_decode(payload_b64))
     except (ValueError, TypeError):
@@ -242,8 +231,16 @@ def verify_handoff(
     # The signing key (header.kid) must be the key the payload claims to be from.
     if header.get("kid") != payload.get("agent_key_id"):
         return HandoffVerdict(False, "header kid does not match payload agent_key_id")
+    return payload
 
-    receipt_id = "sha256:" + _sha256_hex(receipt_jws.encode("ascii"))
+
+def _check_replay_and_binding(
+    receipt_id: str,
+    payload: dict[str, Any],
+    seen_receipt_ids: set[str] | None,
+    expected_input: Any,
+) -> HandoffVerdict | None:
+    """Check replay protection and input binding. Returns a failure verdict or None."""
     if seen_receipt_ids is not None:
         # Reserve the id up front (record-before-validate) so there is no
         # check-then-add gap inside this call. For CONCURRENT callees the store
@@ -267,6 +264,13 @@ def verify_handoff(
                 receipt_id=receipt_id,
                 payload=payload,
             )
+    return None
+
+
+def _verify_handoff_semantics(
+    payload: dict[str, Any], callee_card: dict[str, Any], receipt_id: str
+) -> HandoffVerdict:
+    """Verify operation, target, skill, and capability fields in the payload."""
     if payload.get("operation") != "agent_handoff":
         return HandoffVerdict(
             False,
@@ -309,3 +313,57 @@ def verify_handoff(
             receipt_id=receipt_id,
         )
     return HandoffVerdict(True, "", skill=skill, receipt_id=receipt_id, payload=payload)
+
+
+def verify_handoff(
+    receipt_jws: str,
+    caller_card: dict[str, Any],
+    callee_card: dict[str, Any],
+    *,
+    expected_input: Any = _UNSET,
+    seen_receipt_ids: set[str] | None = None,
+) -> HandoffVerdict:
+    """Verify a hand-off receipt **offline** against the *caller's* published key
+    and confirm it authorises this call on *this* (callee) card. No network.
+
+    Checks: caller key present → JOSE header is canonical with the expected
+    ``alg``/``typ``/``crit``/``raucle/v1`` and ``kid`` bound to ``agent_key_id`` →
+    signature valid → payload is canonical (§6) → ``operation == agent_handoff`` →
+    target matches this agent's URL → skill is advertised → if the callee binds
+    the skill to a capability hash, the receipt must cite it.
+
+    Binding the call (anti-replay / anti-substitution): pass ``expected_input`` —
+    the exact skill input this callee is about to execute — and the receipt's
+    ``input_hash`` must match it, so a receipt signed for one call cannot be
+    replayed against a different input. For replay of the *same* input, pass a
+    ``seen_receipt_ids`` set the callee persists; a receipt id seen before is
+    rejected (idempotency). A caller-key swap is out of scope: ``caller_card``
+    must be authenticated/pinned out of band (A2A discovery), which this helper
+    assumes — it cannot detect a forged card.
+    """
+    # Step 1: verify caller key + JWS signature
+    sig_result = _verify_jws_signature(receipt_jws, caller_card)
+    if isinstance(sig_result, HandoffVerdict):
+        return sig_result
+    header_b64, payload_b64, _sig_b64 = sig_result
+
+    # Step 2: validate JOSE header
+    header_result = _verify_jose_header(header_b64)
+    if isinstance(header_result, HandoffVerdict):
+        return header_result
+    header = header_result
+
+    # Step 3: validate payload
+    payload_result = _verify_jws_payload(payload_b64, header)
+    if isinstance(payload_result, HandoffVerdict):
+        return payload_result
+    payload = payload_result
+
+    # Step 4: replay protection and input binding
+    receipt_id = "sha256:" + _sha256_hex(receipt_jws.encode("ascii"))
+    replay_error = _check_replay_and_binding(receipt_id, payload, seen_receipt_ids, expected_input)
+    if replay_error is not None:
+        return replay_error
+
+    # Step 5: verify handoff semantics (operation, target, skill, capability)
+    return _verify_handoff_semantics(payload, callee_card, receipt_id)

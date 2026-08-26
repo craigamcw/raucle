@@ -278,39 +278,7 @@ class RaucleCallbackHandler(BaseCallbackHandler):
         bound_agent_id = (metadata or {}).get("agent_id")
         agent_id = bound_agent_id or "<unbound>"
 
-        if token is None:
-            decision = GateDecision(allowed=False, reason="no in-force capability token")
-        elif self._require_agent_id and bound_agent_id is None:
-            # Strict mode: no independent caller identity means the token's agent
-            # scope cannot be enforced against the caller — fail closed rather
-            # than fall back to trusting the token holder (round-3 run-2 #F2).
-            decision = GateDecision(
-                allowed=False,
-                reason="require_agent_id is set but no caller agent_id in metadata",
-            )
-        elif not isinstance(call_args, dict) and _blacklist_on_named_field(token):
-            # Opaque string tool input: we cannot map it to the constrained
-            # field names, so wrapping it as {"input": ...} would make a
-            # forbidden_values / forbidden_field_combinations blacklist pass
-            # vacuously (round-3b #5 — blacklists fail OPEN here). Fail closed
-            # instead. Positive constraints (allowed_values/starts_with/bounds)
-            # already fail closed on the wrapped args, so they need no guard.
-            decision = GateDecision(
-                allowed=False,
-                reason=(
-                    "cannot enforce a blacklist constraint on an opaque string "
-                    "tool input via this adapter; use a structured-args tool or "
-                    "an allowed_values whitelist for the security-critical field"
-                ),
-            )
-        else:
-            check_args = call_args if isinstance(call_args, dict) else {"input": call_args}
-            # Pass the caller's agent_id so the gate enforces the token's agent
-            # scope (previously the LangChain path left tokens effectively
-            # unbound — the agent_id was only recorded in the receipt).
-            decision = self.gate.check(
-                token=token, tool=tool_name, args=check_args, agent_id=bound_agent_id
-            )
+        decision = self._make_decision(token, tool_name, call_args, bound_agent_id)
 
         self._emit_receipt(
             token=token,
@@ -322,6 +290,50 @@ class RaucleCallbackHandler(BaseCallbackHandler):
 
         if not decision.allowed and self._raise_on_deny:
             raise CapabilityDenied(tool_name, decision.reason or "denied")
+
+    def _make_decision(
+        self,
+        token: Any,
+        tool_name: str,
+        call_args: Any,
+        bound_agent_id: str | None,
+    ) -> GateDecision:
+        """Build the gate decision for an incoming tool call."""
+        if token is None:
+            return GateDecision(allowed=False, reason="no in-force capability token")
+
+        if self._require_agent_id and bound_agent_id is None:
+            # Strict mode: no independent caller identity means the token's agent
+            # scope cannot be enforced against the caller — fail closed rather
+            # than fall back to trusting the token holder (round-3 run-2 #F2).
+            return GateDecision(
+                allowed=False,
+                reason="require_agent_id is set but no caller agent_id in metadata",
+            )
+
+        if not isinstance(call_args, dict) and _blacklist_on_named_field(token):
+            # Opaque string tool input: we cannot map it to the constrained
+            # field names, so wrapping it as {"input": ...} would make a
+            # forbidden_values / forbidden_field_combinations blacklist pass
+            # vacuously (round-3b #5 — blacklists fail OPEN here). Fail closed
+            # instead. Positive constraints (allowed_values/starts_with/bounds)
+            # already fail closed on the wrapped args, so they need no guard.
+            return GateDecision(
+                allowed=False,
+                reason=(
+                    "cannot enforce a blacklist constraint on an opaque string "
+                    "tool input via this adapter; use a structured-args tool or "
+                    "an allowed_values whitelist for the security-critical field"
+                ),
+            )
+
+        check_args = call_args if isinstance(call_args, dict) else {"input": call_args}
+        # Pass the caller's agent_id so the gate enforces the token's agent
+        # scope (previously the LangChain path left tokens effectively
+        # unbound — the agent_id was only recorded in the receipt).
+        return self.gate.check(
+            token=token, tool=tool_name, args=check_args, agent_id=bound_agent_id
+        )
 
     # We don't need on_tool_end / on_tool_error for receipts — the
     # decision was logged at start. LangChain calls them anyway; the

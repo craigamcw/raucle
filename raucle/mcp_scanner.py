@@ -207,13 +207,8 @@ def _stringify(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _scan_tool(tool: dict[str, Any], location: str = "") -> list[Finding]:
-    """Scan a single tool definition.  Returns a list of findings."""
-    findings: list[Finding] = []
-    name = str(tool.get("name", "<unnamed>"))
-
-    # Fields to scrutinise — description and parameter descriptions are the
-    # main injection surface.
+def _collect_scannable_fields(tool: dict[str, Any]) -> list[tuple[str, str]]:
+    """Collect (field_name, content) pairs from a tool definition for scanning."""
     scannable_fields: list[tuple[str, str]] = []
     for fld in ("description", "summary", "instructions"):
         v = tool.get(fld)
@@ -229,6 +224,17 @@ def _scan_tool(tool: dict[str, Any], location: str = "") -> list[Finding]:
                     scannable_fields.append(
                         (f"parameters.{pname}.description", _stringify(pval["description"]))
                     )
+    return scannable_fields
+
+
+def _scan_tool(tool: dict[str, Any], location: str = "") -> list[Finding]:
+    """Scan a single tool definition.  Returns a list of findings."""
+    findings: list[Finding] = []
+    name = str(tool.get("name", "<unnamed>"))
+
+    # Fields to scrutinise — description and parameter descriptions are the
+    # main injection surface.
+    scannable_fields = _collect_scannable_fields(tool)
 
     for field_name, content in scannable_fields:
         findings.extend(_scan_text(name, field_name, content, location))

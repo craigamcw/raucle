@@ -283,6 +283,72 @@ def _ack(
     )
 
 
+def _validate_ack_shape(
+    ack_receipt: dict[str, Any],
+) -> tuple[dict[str, Any], str] | tuple[None, str]:
+    """Check the ack receipt's shape and version. Returns ``(body, sig)`` or ``(None, error)``."""
+    if not isinstance(ack_receipt, dict):
+        return None, "malformed ack receipt (not an object)"
+    body = ack_receipt.get("body")
+    sig = ack_receipt.get("signature")
+    if not isinstance(body, dict) or not isinstance(sig, str):
+        return None, "malformed ack receipt"
+    if body.get("version") != HANDSHAKE_VERSION:
+        return None, f"unknown handshake version {body.get('version')!r}"
+    return body, sig
+
+
+def _verify_ack_signature(body: dict[str, Any], sig: str, record: Any) -> str | None:
+    """Verify the ack signature against the responder's key. Returns error or None."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    try:
+        loaded = serialization.load_pem_public_key(record.public_key_pem.encode())
+        if not isinstance(loaded, Ed25519PublicKey):
+            return "responder key is not Ed25519"
+        loaded.verify(_b64d(sig), _canonical_json(body))
+    except (InvalidSignature, ValueError, TypeError):
+        return "ack signature did not verify against responder key"
+    return None
+
+
+def _check_ack_bindings(
+    body: dict[str, Any],
+    record: Any,
+    responder_key_id: str,
+    expected_responder: str | None,
+    expected_nonce: str | None,
+    expected_token_id: str | None,
+    expected_request: HandshakeRequest | None,
+    expected_decision: str | None,
+) -> str | None:
+    """Check anti-impersonation and anti-replay bindings. Returns error or None."""
+    # Anti-impersonation (symmetric to accept_call): the signed responder NAME
+    # must match the registry's authoritative record for the responder key, so a
+    # registered attacker key cannot sign an ack claiming to be a DIFFERENT org
+    # (codex round 4).
+    if body.get("responder") != record.issuer:
+        return (
+            f"responder identity mismatch: ack claims {body.get('responder')!r} but key "
+            f"{responder_key_id} is registered to {record.issuer!r}"
+        )
+    if expected_responder is not None and body.get("responder") != expected_responder:
+        return f"responder is {body.get('responder')!r}, expected {expected_responder!r}"
+    if expected_nonce is not None and body.get("nonce") != expected_nonce:
+        return "ack nonce mismatch (possible replay)"
+    if expected_token_id is not None and body.get("token_id") != expected_token_id:
+        return "ack token_id mismatch (bound to a different capability)"
+    if expected_request is not None:
+        want = _sha256_hex(_canonical_json(expected_request.to_dict()))
+        if body.get("request_hash") != want:
+            return "ack request_hash mismatch (bound to a different request)"
+    if expected_decision is not None and body.get("decision") != expected_decision:
+        return f"decision is {body.get('decision')}, expected {expected_decision}"
+    return None
+
+
 def verify_ack(
     ack_receipt: dict[str, Any],
     *,
@@ -305,18 +371,9 @@ def verify_ack(
     — it does NOT by itself mean ACCEPT; pass ``expected_decision="ACCEPT"`` to
     require acceptance, or read ``body['decision']``.
     """
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-    if not isinstance(ack_receipt, dict):
-        return False, "malformed ack receipt (not an object)"
-    body = ack_receipt.get("body")
-    sig = ack_receipt.get("signature")
-    if not isinstance(body, dict) or not isinstance(sig, str):
-        return False, "malformed ack receipt"
-    if body.get("version") != HANDSHAKE_VERSION:
-        return False, f"unknown handshake version {body.get('version')!r}"
+    body, sig = _validate_ack_shape(ack_receipt)
+    if body is None:
+        return False, sig
 
     # Replay-safe by default: a successful verify must be BOUND to this handshake.
     # The initiator always holds the request it sent, so it can always pass one of
@@ -338,36 +395,22 @@ def verify_ack(
         why = "revoked" if (record is not None and record.revoked) else "unknown"
         return False, f"responder key_id {responder_key_id} is {why} in the registry"
 
-    try:
-        loaded = serialization.load_pem_public_key(record.public_key_pem.encode())
-        if not isinstance(loaded, Ed25519PublicKey):
-            return False, "responder key is not Ed25519"
-        loaded.verify(_b64d(sig), _canonical_json(body))
-    except (InvalidSignature, ValueError, TypeError):
-        return False, "ack signature did not verify against responder key"
+    sig_error = _verify_ack_signature(body, sig, record)
+    if sig_error is not None:
+        return False, sig_error
 
-    # Anti-impersonation (symmetric to accept_call): the signed responder NAME
-    # must match the registry's authoritative record for the responder key, so a
-    # registered attacker key cannot sign an ack claiming to be a DIFFERENT org
-    # (codex round 4).
-    if body.get("responder") != record.issuer:
-        return False, (
-            f"responder identity mismatch: ack claims {body.get('responder')!r} but key "
-            f"{responder_key_id} is registered to {record.issuer!r}"
-        )
-    if expected_responder is not None and body.get("responder") != expected_responder:
-        return False, f"responder is {body.get('responder')!r}, expected {expected_responder!r}"
-
-    if expected_nonce is not None and body.get("nonce") != expected_nonce:
-        return False, "ack nonce mismatch (possible replay)"
-    if expected_token_id is not None and body.get("token_id") != expected_token_id:
-        return False, "ack token_id mismatch (bound to a different capability)"
-    if expected_request is not None:
-        want = _sha256_hex(_canonical_json(expected_request.to_dict()))
-        if body.get("request_hash") != want:
-            return False, "ack request_hash mismatch (bound to a different request)"
-    if expected_decision is not None and body.get("decision") != expected_decision:
-        return False, f"decision is {body.get('decision')}, expected {expected_decision}"
+    binding_error = _check_ack_bindings(
+        body,
+        record,
+        responder_key_id,
+        expected_responder,
+        expected_nonce,
+        expected_token_id,
+        expected_request,
+        expected_decision,
+    )
+    if binding_error is not None:
+        return False, binding_error
 
     return True, f"ack verified: {body.get('decision')}"
 

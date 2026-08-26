@@ -456,6 +456,82 @@ class AuditVerifier:
 
             self._public_key = serialization.load_pem_public_key(public_key_pem)
 
+    def _verify_event_record(
+        self,
+        rec: dict[str, Any],
+        line_no: int,
+        expected_index: int,
+        prev_hash: str,
+        report: VerificationReport,
+    ) -> str:
+        """Verify one event record. Returns the stored hash to chain forward."""
+        if rec.get("index") != expected_index:
+            report.errors.append(
+                f"line {line_no}: index mismatch (expected {expected_index}, "
+                f"got {rec.get('index')})"
+            )
+            if report.first_invalid_index is None:
+                report.first_invalid_index = rec.get("index", expected_index)
+            report.valid = False
+
+        if rec.get("prev_hash") != prev_hash:
+            report.errors.append(
+                f"line {line_no}: prev_hash mismatch — chain broken at index {expected_index}"
+            )
+            if report.first_invalid_index is None:
+                report.first_invalid_index = expected_index
+            report.valid = False
+
+        # Recompute hash without the hash field
+        stored_hash = rec.pop("hash", None)
+        recomputed = _sha256_hex(_canonical_json(rec))
+        rec["hash"] = stored_hash  # restore for any downstream readers
+        if stored_hash != recomputed:
+            report.errors.append(
+                f"line {line_no}: hash mismatch at index {expected_index} "
+                f"(stored != recomputed) — record tampered"
+            )
+            if report.first_invalid_index is None:
+                report.first_invalid_index = expected_index
+            report.valid = False
+
+        return stored_hash or ""
+
+    def _verify_downgrade_and_truncation(
+        self,
+        report: VerificationReport,
+        last_event_index: int,
+        last_signed_checkpoint_index: int,
+    ) -> None:
+        """Post-loop checks: AUDIT-DOWNGRADE and AUDIT-TRUNC (a)."""
+        # ---- AUDIT-DOWNGRADE: a verifier holding a key must not accept a
+        # signature-stripped chain. Anything not provably "signed" is invalid.
+        if self._public_key is not None and report.signed_mode != "signed":
+            report.errors.append(
+                "public key supplied but chain is not signed "
+                f"(signed_mode={report.signed_mode!r}) — refusing to accept a "
+                "signature-stripped / unattributed chain (AUDIT-DOWNGRADE)"
+            )
+            report.valid = False
+
+        # ---- AUDIT-TRUNC (a): with a key, require a signed checkpoint that
+        # covers the final event index. Any event past the last signed
+        # checkpoint is an unverifiable tail (could be a truncation point —
+        # or, symmetrically, the dropped records are simply gone). A cleanly
+        # closed chain has a head checkpoint at the final index.
+        if (
+            self._public_key is not None
+            and report.signed_mode == "signed"
+            and last_event_index >= 0
+            and last_signed_checkpoint_index < last_event_index + 1
+        ):
+            report.errors.append(
+                f"unverifiable tail beyond last signed checkpoint: last signed "
+                f"checkpoint covers index {last_signed_checkpoint_index}, but chain "
+                f"has events through index {last_event_index} (AUDIT-TRUNC)"
+            )
+            report.valid = False
+
     def verify_chain(
         self,
         path: str | Path,
@@ -547,71 +623,20 @@ class AuditVerifier:
                     continue
 
                 # Verify event record
-                if rec.get("index") != expected_index:
-                    report.errors.append(
-                        f"line {line_no}: index mismatch (expected {expected_index}, "
-                        f"got {rec.get('index')})"
-                    )
-                    if report.first_invalid_index is None:
-                        report.first_invalid_index = rec.get("index", expected_index)
-                    report.valid = False
-
-                if rec.get("prev_hash") != prev_hash:
-                    report.errors.append(
-                        f"line {line_no}: prev_hash mismatch — chain broken at "
-                        f"index {expected_index}"
-                    )
-                    if report.first_invalid_index is None:
-                        report.first_invalid_index = expected_index
-                    report.valid = False
-
-                # Recompute hash without the hash field
-                stored_hash = rec.pop("hash", None)
-                recomputed = _sha256_hex(_canonical_json(rec))
-                rec["hash"] = stored_hash  # restore for any downstream readers
-                if stored_hash != recomputed:
-                    report.errors.append(
-                        f"line {line_no}: hash mismatch at index {expected_index} "
-                        f"(stored != recomputed) — record tampered"
-                    )
-                    if report.first_invalid_index is None:
-                        report.first_invalid_index = expected_index
-                    report.valid = False
-
-                leaf_hashes.append(stored_hash or "")
+                stored_hash = self._verify_event_record(
+                    rec, line_no, expected_index, prev_hash, report
+                )
+                leaf_hashes.append(stored_hash)
                 prev_hash = stored_hash or prev_hash
                 last_event_index = expected_index
                 last_event_hash = stored_hash
                 expected_index += 1
                 report.event_count += 1
 
-        # ---- AUDIT-DOWNGRADE: a verifier holding a key must not accept a
-        # signature-stripped chain. Anything not provably "signed" is invalid.
-        if self._public_key is not None and report.signed_mode != "signed":
-            report.errors.append(
-                "public key supplied but chain is not signed "
-                f"(signed_mode={report.signed_mode!r}) — refusing to accept a "
-                "signature-stripped / unattributed chain (AUDIT-DOWNGRADE)"
-            )
-            report.valid = False
-
-        # ---- AUDIT-TRUNC (a): with a key, require a signed checkpoint that
-        # covers the final event index. Any event past the last signed
-        # checkpoint is an unverifiable tail (could be a truncation point —
-        # or, symmetrically, the dropped records are simply gone). A cleanly
-        # closed chain has a head checkpoint at the final index.
-        if (
-            self._public_key is not None
-            and report.signed_mode == "signed"
-            and last_event_index >= 0
-            and last_signed_checkpoint_index < last_event_index + 1
-        ):
-            report.errors.append(
-                f"unverifiable tail beyond last signed checkpoint: last signed "
-                f"checkpoint covers index {last_signed_checkpoint_index}, but chain "
-                f"has events through index {last_event_index} (AUDIT-TRUNC)"
-            )
-            report.valid = False
+        # ---- AUDIT-DOWNGRADE / AUDIT-TRUNC (a)
+        self._verify_downgrade_and_truncation(
+            report, last_event_index, last_signed_checkpoint_index
+        )
 
         # ---- AUDIT-TRUNC (b): externally-anchored high-water mark. The only
         # way to detect truncation that drops records past the last checkpoint.

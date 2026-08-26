@@ -369,23 +369,9 @@ class TrustRegistry:
 
     # -- integrity -----------------------------------------------------------
 
-    def verify_integrity(
-        self,
-        *,
-        operator_public_pem: bytes | None = None,
-        min_index: int | None = None,
-        expected_head_hash: str | None = None,
-        max_age_seconds: int | None = None,
-        now: int | None = None,
-    ) -> bool:
-        """Verify the hash chain and (if signed) the operator signatures.
-
-        Raises :class:`RegistryIntegrityError` on any break. ``operator_public_pem``
-        pins the expected operator key; if omitted, signatures are verified against
-        the key declared in the header (integrity, not external authentication).
-        """
+    def _verify_chain_entries(self) -> None:
+        """Verify the hash chain: each entry's index, prev_hash, and hash."""
         prev = _GENESIS
-        op_pub = None
         for i, e in enumerate(self._entries):
             if e.get("index") != i:
                 raise RegistryIntegrityError(f"entry {i}: index mismatch")
@@ -406,8 +392,8 @@ class TrustRegistry:
                     )
             prev = e["hash"]
 
-        # Enforce active issuer-name uniqueness on load — publish() alone does not
-        # protect a hand-crafted (even operator-signed) registry file (codex r3 #1).
+    def _check_issuer_uniqueness(self) -> None:
+        """Enforce active issuer-name uniqueness on load (codex r3 #1)."""
         seen_names: dict[str, str] = {}
         for kid, rec in self._fold().items():
             if rec.revoked:
@@ -424,43 +410,46 @@ class TrustRegistry:
                 )
             seen_names[canon] = kid
 
-        header = self._entries[0] if self._entries else {}
-        if header.get("signed"):
-            from cryptography.exceptions import InvalidSignature
-            from cryptography.hazmat.primitives import serialization
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-                Ed25519PublicKey,
-            )
+    def _verify_operator_signatures(self, operator_public_pem: bytes | None) -> None:
+        """Verify operator signatures on each entry if the chain is signed."""
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-            pem = operator_public_pem
-            if pem is None and self._signer is not None:
-                pem = self._signer.public_key_pem()
-            if pem is None:
-                # Chain integrity is verified (tamper-evidence within the log),
-                # but without the operator key we have NOT authenticated the log —
-                # a forger who rebuilt the whole chain would pass. That is a valid
-                # choice for a local, trusted file (load() does this quietly); the
-                # risky case (untrusted network source) is warned in from_url().
-                # Do NOT return here: the freshness checks below must still run
-                # (codex r8) — a rollback can be detected even unauthenticated.
-                self._authenticated = False
-            else:
-                self._authenticated = True
-                loaded = serialization.load_pem_public_key(pem)
-                if not isinstance(loaded, Ed25519PublicKey):
-                    raise RegistryIntegrityError("operator key is not Ed25519")
-                op_pub = loaded
-                for i, e in enumerate(self._entries):
-                    sig = e.get("operator_sig")
-                    if not sig:
-                        raise RegistryIntegrityError(f"entry {i}: missing operator signature")
-                    try:
-                        op_pub.verify(_b64d(sig), e["hash"].encode("ascii"))
-                    except (InvalidSignature, ValueError) as exc:
-                        raise RegistryIntegrityError(
-                            f"entry {i}: operator signature invalid"
-                        ) from exc
+        pem = operator_public_pem
+        if pem is None and self._signer is not None:
+            pem = self._signer.public_key_pem()
+        if pem is None:
+            # Chain integrity is verified (tamper-evidence within the log),
+            # but without the operator key we have NOT authenticated the log —
+            # a forger who rebuilt the whole chain would pass. That is a valid
+            # choice for a local, trusted file (load() does this quietly); the
+            # risky case (untrusted network source) is warned in from_url().
+            # Do NOT return here: the freshness checks below must still run
+            # (codex r8) — a rollback can be detected even unauthenticated.
+            self._authenticated = False
+            return
+        self._authenticated = True
+        loaded = serialization.load_pem_public_key(pem)
+        if not isinstance(loaded, Ed25519PublicKey):
+            raise RegistryIntegrityError("operator key is not Ed25519")
+        for i, e in enumerate(self._entries):
+            sig = e.get("operator_sig")
+            if not sig:
+                raise RegistryIntegrityError(f"entry {i}: missing operator signature")
+            try:
+                loaded.verify(_b64d(sig), e["hash"].encode("ascii"))
+            except (InvalidSignature, ValueError) as exc:
+                raise RegistryIntegrityError(f"entry {i}: operator signature invalid") from exc
 
+    def _check_freshness(
+        self,
+        min_index: int | None,
+        expected_head_hash: str | None,
+        max_age_seconds: int | None,
+        now: int | None,
+    ) -> None:
+        """Enforce freshness anchors: min_index, expected_head_hash, max_age (codex r7)."""
         # Freshness anchor (codex r7): a chain-valid, fully operator-signed
         # snapshot is still vulnerable to a *rollback* — an attacker serves an
         # older signed prefix that omits a later revocation. The consumer pins
@@ -492,6 +481,28 @@ class TrustRegistry:
                 raise RegistryIntegrityError(
                     f"stale snapshot: head is {ref - head_ts}s old (max {max_age_seconds}s)"
                 )
+
+    def verify_integrity(
+        self,
+        *,
+        operator_public_pem: bytes | None = None,
+        min_index: int | None = None,
+        expected_head_hash: str | None = None,
+        max_age_seconds: int | None = None,
+        now: int | None = None,
+    ) -> bool:
+        """Verify the hash chain and (if signed) the operator signatures.
+
+        Raises :class:`RegistryIntegrityError` on any break. ``operator_public_pem``
+        pins the expected operator key; if omitted, signatures are verified against
+        the key declared in the header (integrity, not external authentication).
+        """
+        self._verify_chain_entries()
+        self._check_issuer_uniqueness()
+        header = self._entries[0] if self._entries else {}
+        if header.get("signed"):
+            self._verify_operator_signatures(operator_public_pem)
+        self._check_freshness(min_index, expected_head_hash, max_age_seconds, now)
         return True
 
 

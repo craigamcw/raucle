@@ -204,6 +204,117 @@ def _worse(a: str, b: str) -> str:
     return a if _WORST[a] >= _WORST[b] else b
 
 
+def _group_receipt_nodes(
+    numbered: list[tuple[int, ProvenanceReceipt]],
+) -> tuple[dict[str, AuditNode], dict[int, AuditNode], dict[str, AuditNode], dict[str, str]]:
+    """Group receipts by tool or operation into audit nodes.
+
+    Returns ``(grouped, line_to_node, hash_to_node, node_tool)``.
+    """
+    grouped: dict[str, AuditNode] = {}
+    line_to_node: dict[int, AuditNode] = {}
+    hash_to_node: dict[str, AuditNode] = {}
+    node_tool: dict[str, str] = {}
+    for line_no, r in numbered:
+        tool = getattr(r, "tool", "") or ""
+        if tool:
+            key, label, kind = f"{r.agent_id}/{tool}", f"{r.agent_id} → {tool}", "tool"
+        else:
+            key = f"{r.agent_id}/{r.operation.value}"
+            label, kind = f"{r.agent_id} · {r.operation.value}", "operation"
+        node = grouped.get(key)
+        if node is None:
+            node = AuditNode(id=key, label=label, kind=kind, status=GREEN)
+            grouped[key] = node
+            node_tool[key] = tool
+        node.receipt_hashes.append(r.receipt_hash)
+        line_to_node[line_no] = node
+        hash_to_node[r.receipt_hash] = node
+    return grouped, line_to_node, hash_to_node, node_tool
+
+
+def _attribute_findings(
+    verdict: Any,
+    line_to_node: dict[int, AuditNode],
+    hash_to_node: dict[str, AuditNode],
+) -> list[str]:
+    """Attribute verify_chain findings to their nodes; return global findings."""
+    global_findings: list[str] = []
+    for err in verdict.errors:
+        kind, key, detail = _parse_finding(err)
+        node = None
+        if kind == "line":
+            node = line_to_node.get(key)
+        elif kind == "receipt":
+            node = hash_to_node.get(key)
+        if node is not None:
+            node.status = RED
+            node.evidence.append(detail)
+        else:
+            global_findings.append(err)
+    return global_findings
+
+
+def _build_proof_obligations(
+    proofs: list[dict[str, Any]],
+) -> tuple[list[ProofObligation], dict[str, tuple[str, str]]]:
+    """Build proof obligations from supplied ProofResult dicts.
+
+    Returns ``(obligations, proof_verdict_by_hash)``.
+    """
+    obligations: list[ProofObligation] = []
+    proof_verdict_by_hash: dict[str, tuple[str, str]] = {}
+    for p in proofs:
+        colour, detail = _proof_verdict(p)
+        obligations.append(
+            ProofObligation(
+                name=p.get("prover", "policy completeness"),
+                prover=p.get("prover", ""),
+                status=colour,
+                certificate=p.get("hash", ""),
+                grammar_hash=p.get("grammar_hash", ""),
+                policy_hash=p.get("policy_hash", ""),
+                detail=detail,
+            )
+        )
+        # Only index trusted (hash-verified) proofs for the node join, so a
+        # forged hash cannot be matched by a citing capability.
+        if p.get("hash") and _proof_hash_ok(p):
+            proof_verdict_by_hash[p["hash"]] = (colour, detail)
+    return obligations, proof_verdict_by_hash
+
+
+def _join_capabilities_to_proofs(
+    grouped: dict[str, AuditNode],
+    node_tool: dict[str, str],
+    capabilities: list[dict[str, Any]],
+    proof_verdict_by_hash: dict[str, tuple[str, str]],
+) -> None:
+    """Join tool nodes → capability tokens → the proofs they cite."""
+    cap_by_tool = {c.get("tool"): c for c in capabilities if c.get("tool")}
+    for key, node in grouped.items():
+        tool = node_tool.get(key)
+        cap = cap_by_tool.get(tool) if tool else None
+        cited = cap.get("policy_proof_hash") if cap else None
+        if not cited:
+            continue
+        node.proof_certificate = cited
+        node.lean_theorem = "Theorem 3 (policy-proof composition)"
+        verdict_pair = proof_verdict_by_hash.get(cited)
+        if verdict_pair is None:
+            node.proof_status = AMBER
+            node.status = _worse(node.status, AMBER)
+            node.evidence.append(
+                f"capability cites proof {cited} but no trusted (hash-verified) "
+                f"proof with that hash was supplied"
+            )
+            continue
+        pstatus, pdetail = verdict_pair
+        node.proof_status = pstatus
+        node.status = _worse(node.status, pstatus)
+        node.evidence.append(f"cited proof {cited}: {pdetail}")
+
+
 def build_report(
     chain_path: str | Path,
     public_keys: dict[str, bytes],
@@ -235,25 +346,7 @@ def build_report(
 
     # Nodes: group receipts by the tool they invoke, else by operation. Track
     # which line numbers and receipt hashes belong to each node for attribution.
-    grouped: dict[str, AuditNode] = {}
-    line_to_node: dict[int, AuditNode] = {}
-    hash_to_node: dict[str, AuditNode] = {}
-    node_tool: dict[str, str] = {}
-    for line_no, r in numbered:
-        tool = getattr(r, "tool", "") or ""
-        if tool:
-            key, label, kind = f"{r.agent_id}/{tool}", f"{r.agent_id} → {tool}", "tool"
-        else:
-            key = f"{r.agent_id}/{r.operation.value}"
-            label, kind = f"{r.agent_id} · {r.operation.value}", "operation"
-        node = grouped.get(key)
-        if node is None:
-            node = AuditNode(id=key, label=label, kind=kind, status=GREEN)
-            grouped[key] = node
-            node_tool[key] = tool
-        node.receipt_hashes.append(r.receipt_hash)
-        line_to_node[line_no] = node
-        hash_to_node[r.receipt_hash] = node
+    grouped, line_to_node, hash_to_node, node_tool = _group_receipt_nodes(numbered)
 
     # Tampered receipts → RED on the owning node.
     for h in tampered:
@@ -264,19 +357,7 @@ def build_report(
 
     # Attribute every verify_chain finding to its node by line or receipt hash;
     # anything not attributable is a global (DAG/taint-level) finding.
-    global_findings: list[str] = []
-    for err in verdict.errors:
-        kind, key, detail = _parse_finding(err)
-        node = None
-        if kind == "line":
-            node = line_to_node.get(key)
-        elif kind == "receipt":
-            node = hash_to_node.get(key)
-        if node is not None:
-            node.status = RED
-            node.evidence.append(detail)
-        else:
-            global_findings.append(err)
+    global_findings = _attribute_findings(verdict, line_to_node, hash_to_node)
 
     # Nodes with no attributed finding verified cleanly — say so explicitly,
     # even when the chain is INVALID elsewhere (precise, not blanket-amber).
@@ -285,49 +366,10 @@ def build_report(
             node.evidence.append("chain verified clean for this node's receipts")
 
     # Proof obligations from supplied ProofResult dicts.
-    obligations: list[ProofObligation] = []
-    proof_verdict_by_hash: dict[str, tuple[str, str]] = {}
-    for p in proofs:
-        colour, detail = _proof_verdict(p)
-        obligations.append(
-            ProofObligation(
-                name=p.get("prover", "policy completeness"),
-                prover=p.get("prover", ""),
-                status=colour,
-                certificate=p.get("hash", ""),
-                grammar_hash=p.get("grammar_hash", ""),
-                policy_hash=p.get("policy_hash", ""),
-                detail=detail,
-            )
-        )
-        # Only index trusted (hash-verified) proofs for the node join, so a
-        # forged hash cannot be matched by a citing capability.
-        if p.get("hash") and _proof_hash_ok(p):
-            proof_verdict_by_hash[p["hash"]] = (colour, detail)
+    obligations, proof_verdict_by_hash = _build_proof_obligations(proofs)
 
     # Join: a tool node → the capability for that tool → the proof it cites.
-    cap_by_tool = {c.get("tool"): c for c in capabilities if c.get("tool")}
-    for key, node in grouped.items():
-        tool = node_tool.get(key)
-        cap = cap_by_tool.get(tool) if tool else None
-        cited = cap.get("policy_proof_hash") if cap else None
-        if not cited:
-            continue
-        node.proof_certificate = cited
-        node.lean_theorem = "Theorem 3 (policy-proof composition)"
-        verdict_pair = proof_verdict_by_hash.get(cited)
-        if verdict_pair is None:
-            node.proof_status = AMBER
-            node.status = _worse(node.status, AMBER)
-            node.evidence.append(
-                f"capability cites proof {cited} but no trusted (hash-verified) "
-                f"proof with that hash was supplied"
-            )
-            continue
-        pstatus, pdetail = verdict_pair
-        node.proof_status = pstatus
-        node.status = _worse(node.status, pstatus)
-        node.evidence.append(f"cited proof {cited}: {pdetail}")
+    _join_capabilities_to_proofs(grouped, node_tool, capabilities, proof_verdict_by_hash)
 
     def _count(colour: str) -> int:
         return sum(1 for n in grouped.values() if n.status == colour) + sum(

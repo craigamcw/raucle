@@ -77,68 +77,13 @@ class HeuristicClassifier:
     def classify(self, text: str) -> dict[str, Any]:
         text_lower = text.lower()
 
-        # -----------------------------------------------------------------
-        # 1. Sum weighted injection signals
-        # -----------------------------------------------------------------
-        injection_score = 0.0
-        injection_hits: list[tuple[str, int]] = []  # (keyword, position)
-
-        # Position bonus only applies if injection leads the text (no benign preamble).
-        # Measure benign content in the opening 100 chars to prevent the gameable
-        # pattern of "totally fine intro... ignore all previous instructions".
-        opening = text_lower[:100]
-        benign_in_opening = any(kw in opening for kw in BENIGN_SIGNALS)
-
-        for keyword, weight in INJECTION_SIGNALS.items():
-            pos = text_lower.find(keyword)
-            if pos == -1:
-                continue
-
-            effective_weight = weight
-
-            # Position bonus: injection signal within first 100 chars, but only when
-            # the opening has no benign preamble (otherwise an attacker can bypass this
-            # by prefixing "please help me: ignore all previous instructions").
-            if pos < 100 and not benign_in_opening:
-                effective_weight *= 1.5
-
-            # Negation check: reduce weight if negation word appears nearby before keyword
-            window_start = max(0, pos - _NEGATION_WINDOW)
-            preceding = text_lower[window_start:pos]
-            if _NEGATION_PATTERN.search(preceding):
-                effective_weight *= 0.3  # reduce by 0.7 (multiply by 1-0.7)
-
-            injection_score += effective_weight
-            injection_hits.append((keyword, pos))
-
-        # -----------------------------------------------------------------
-        # 2. Density bonus: 3+ injection signals in any 200-char window
-        # -----------------------------------------------------------------
-        if len(injection_hits) >= 3:
-            positions = sorted(h[1] for h in injection_hits)
-            for i in range(len(positions)):
-                window_end = positions[i] + 200
-                count_in_window = sum(1 for p in positions if positions[i] <= p <= window_end)
-                if count_in_window >= 3:
-                    injection_score += 0.1
-                    break
-
+        injection_score, injection_hits = self._score_injection(text_lower)
+        injection_score = self._apply_density_bonus(injection_score, injection_hits)
         injection_score = min(1.0, injection_score)
 
-        # -----------------------------------------------------------------
-        # 3. Sum weighted benign signals (capped at 0.5)
-        # -----------------------------------------------------------------
-        benign_score = 0.0
-        for keyword, weight in BENIGN_SIGNALS.items():
-            if keyword in text_lower:
-                benign_score += weight
-        benign_score = min(0.5, benign_score)
+        benign_score = self._score_benign(text_lower)
 
-        # -----------------------------------------------------------------
-        # 4. Final score
-        # -----------------------------------------------------------------
-        score = injection_score - (benign_score * 0.5)
-        score = max(0.0, min(1.0, score))
+        score = max(0.0, min(1.0, injection_score - (benign_score * 0.5)))
 
         categories: list[str] = []
         technique = ""
@@ -151,6 +96,63 @@ class HeuristicClassifier:
             "categories": categories,
             "technique": technique,
         }
+
+    @staticmethod
+    def _score_injection(
+        text_lower: str,
+    ) -> tuple[float, list[tuple[str, int]]]:
+        """Sum weighted injection signals with position/negation adjustments."""
+        injection_score = 0.0
+        injection_hits: list[tuple[str, int]] = []
+
+        opening = text_lower[:100]
+        benign_in_opening = any(kw in opening for kw in BENIGN_SIGNALS)
+
+        for keyword, weight in INJECTION_SIGNALS.items():
+            pos = text_lower.find(keyword)
+            if pos == -1:
+                continue
+
+            effective_weight = weight
+
+            if pos < 100 and not benign_in_opening:
+                effective_weight *= 1.5
+
+            window_start = max(0, pos - _NEGATION_WINDOW)
+            preceding = text_lower[window_start:pos]
+            if _NEGATION_PATTERN.search(preceding):
+                effective_weight *= 0.3
+
+            injection_score += effective_weight
+            injection_hits.append((keyword, pos))
+
+        return injection_score, injection_hits
+
+    @staticmethod
+    def _apply_density_bonus(
+        injection_score: float, injection_hits: list[tuple[str, int]]
+    ) -> float:
+        """Add a density bonus when 3+ injection signals cluster in a 200-char window."""
+        if len(injection_hits) < 3:
+            return injection_score
+
+        positions = sorted(h[1] for h in injection_hits)
+        for i in range(len(positions)):
+            window_end = positions[i] + 200
+            count_in_window = sum(1 for p in positions if positions[i] <= p <= window_end)
+            if count_in_window >= 3:
+                injection_score += 0.1
+                break
+        return injection_score
+
+    @staticmethod
+    def _score_benign(text_lower: str) -> float:
+        """Sum weighted benign signals (capped at 0.5)."""
+        benign_score = 0.0
+        for keyword, weight in BENIGN_SIGNALS.items():
+            if keyword in text_lower:
+                benign_score += weight
+        return min(0.5, benign_score)
 
 
 class MLClassifier:

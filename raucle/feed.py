@@ -523,8 +523,11 @@ def _severity_to_score(severity: str) -> float:
 _MAX_FEED_BYTES = 8 * 1024 * 1024
 
 # Cloud-provider link-local metadata endpoint (AWS/GCP/Azure IMDS).
-# Intentionally blocked for SSRF prevention.
-_METADATA_IP = "169.254.169.254"
+# This IP is intentionally hardcoded: it is a well-known, stable link-local
+# address used as a BLOCKLIST entry in _is_blocked_ip() to prevent SSRF
+# attacks that target the cloud metadata service. It is never used as a
+# connection target.  noqa: S1313 (sonar: hardcoded IP is safe here).
+_METADATA_IP = "169.254.169.254"  # noqa: S1313
 
 
 def _is_blocked_ip(ip: str) -> bool:

@@ -148,6 +148,12 @@ def _tally_chain_events(raw_lines: list[str], ev: ChainEvidence) -> None:
     ev.distinct_tools = len(tools)
 
 
+def _chain_auth_status(ev: ChainEvidence) -> str:
+    if ev.signed:
+        return "signatures unauthenticated"
+    return "chain unsigned"
+
+
 def extract_evidence(
     chain_path: str | Path, *, public_key_pem: bytes | None = None
 ) -> ChainEvidence:
@@ -383,7 +389,7 @@ _FRAMEWORKS: dict[str, tuple[str, list[Control]]] = {
                         ControlStatus.PARTIAL,
                         "not independently authenticated: supply the operator key (--pubkey) and a "
                         "signed chain for verifiable auditability ("
-                        + ("signatures unauthenticated" if ev.signed else "chain unsigned")
+                        + _chain_auth_status(ev)
                         + ").",
                     )
                 ),

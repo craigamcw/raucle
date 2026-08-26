@@ -444,7 +444,7 @@ def scan_prompt(req: ScanRequest) -> ScanResponse:
     return ScanResponse(**result.to_dict(), scan_time_ms=round(elapsed_ms, 2))
 
 
-@app.post("/scan/batch")
+@app.post("/scan/batch", responses={400: {"description": "Too many prompts"}})
 def scan_batch(req: BatchScanRequest) -> BatchScanResponse:
     """Scan multiple prompts concurrently."""
     if len(req.prompts) > 1000:

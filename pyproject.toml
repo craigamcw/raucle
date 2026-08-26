@@ -59,6 +59,22 @@ multimodal = [
 proof = [
     "z3-solver>=4.12",    # SMT engine for formal-verification provers
 ]
+kms = [
+    "boto3>=1.26",        # AWS KMS signer
+]
+kms-azure = [
+    "azure-keyvault-keys>=4.7",  # Azure Key Vault signer
+    "azure-identity>=1.12",     # Azure authentication
+]
+kms-vault = [
+    "hvac>=1.0",          # HashiCorp Vault signer
+]
+kms-all = [
+    "boto3>=1.26",
+    "azure-keyvault-keys>=4.7",
+    "azure-identity>=1.12",
+    "hvac>=1.0",
+]
 dev = [
     "raucle[rules,server,compliance,langchain]",
     "pytest>=7.0",

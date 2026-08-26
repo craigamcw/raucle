@@ -531,7 +531,7 @@ class OutcomeVerifyRequest(BaseModel):
     tool_calls: list[dict[str, Any]] | None = Field(default=None)
 
 
-@app.post("/verdict/verify")
+@app.post("/verdict/verify", responses={400: {"description": "Invalid receipt"}})
 def verify_receipt(req: VerifyReceiptRequest) -> dict[str, Any]:
     """Verify a signed verdict receipt and return its payload."""
     from raucle.verdicts import VerdictVerificationError, VerdictVerifier

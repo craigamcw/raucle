@@ -29,6 +29,7 @@ _REGISTRY_DESC = "Registry JSONL file"
 _ANSI_RED = "\033[91m"
 _ANSI_YELLOW = "\033[93m"
 _ANSI_GREEN = "\033[92m"
+_ERRORS_HEADER = "\nErrors:"
 
 # Repeated argparse help strings, named once (Sonar S1192).
 _HELP_OUTPUT_FORMAT = "Output format"
@@ -242,13 +243,13 @@ def _build_parser() -> argparse.ArgumentParser:
     reg_init.add_argument("--operator-key", help="Operator private key PEM to sign the registry")
 
     reg_pub = reg_sub.add_parser("publish", help="Publish an issuer public key to the registry")
-    reg_pub.add_argument("path", help="Registry JSONL file")
+    reg_pub.add_argument("path", help=_REGISTRY_DESC)
     reg_pub.add_argument("pubkey", help="Issuer public-key PEM file to publish")
     reg_pub.add_argument("--issuer", required=True, help="Issuer display name")
     reg_pub.add_argument("--operator-key", help="Operator private key PEM (if signed)")
 
     reg_rev = reg_sub.add_parser("revoke", help="Revoke an issuer key")
-    reg_rev.add_argument("path", help="Registry JSONL file")
+    reg_rev.add_argument("path", help=_REGISTRY_DESC)
     reg_rev.add_argument("key_id", help="key_id to revoke")
     reg_rev.add_argument("--reason", default="", help="Revocation reason")
     reg_rev.add_argument("--operator-key", help="Operator private key PEM (if signed)")
@@ -267,7 +268,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     reg_verify = reg_sub.add_parser("verify", help="Verify a registry's integrity")
-    reg_verify.add_argument("path", help="Registry JSONL file")
+    reg_verify.add_argument("path", help=_REGISTRY_DESC)
     reg_verify.add_argument("--operator-pubkey", help="Operator public-key PEM to authenticate")
 
     # -- compliance (evidence packs, P4) ------------------------------------
@@ -835,44 +836,49 @@ def _cmd_rules_fuzz(args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps(report.to_dict(), indent=2))
     else:
-        # Table output
-        print(
-            f"\nOverall coverage: {report.overall_coverage:.0%} "
-            f"({report.total_caught}/{report.total_variants} variants detected)"
-        )
-        print(f"Strategies: {', '.join(report.strategies_tested)}\n")
-        header = f"{'Rule ID':<12} {'Coverage':>9} {'Caught':>7} {'Total':>7}  Missed strategies"
-        print(header)
-        print("-" * len(header))
-        for entry in report.results:
-            missed_str = ", ".join(entry.missed_strategies) if entry.missed_strategies else "—"
-            cov_str = f"{entry.coverage:.0%}"
-            if entry.coverage < 0.5:
-                cov_colored = f"\033[91m{cov_str}\033[0m"
-            elif entry.coverage < 0.8:
-                cov_colored = f"\033[93m{cov_str}\033[0m"
-            else:
-                cov_colored = f"\033[92m{cov_str}\033[0m"
-            print(
-                f"{entry.rule_id:<12} {cov_colored:>18} {entry.caught:>7} "
-                f"{entry.total:>7}  {missed_str}"
-            )
-        print()
-        # Highlight rules with low coverage
-        weak = [e for e in report.results if e.coverage < 0.5]
-        if weak:
-            print(
-                f"⚠ {len(weak)} rule(s) with <50% variant coverage — consider expanding patterns:"
-            )
-            for e in weak:
-                print(f"  {e.rule_id}: {e.coverage:.0%} — missed: {', '.join(e.missed_strategies)}")
-                if e.sample_misses:
-                    print(f"    Example miss: {e.sample_misses[0][:80]!r}")
-
+        _print_fuzz_report_table(report)
     # Exit 1 if any rule has 0% coverage
     if any(e.coverage <= 0.0 for e in report.results):
         return 1
     return 0
+
+
+def _fuzz_coverage_color(cov: float) -> str:
+    """Return ANSI-colored coverage percentage string."""
+    cov_str = f"{cov:.0%}"
+    if cov < 0.5:
+        return f"\033[91m{cov_str}\033[0m"
+    if cov < 0.8:
+        return f"\033[93m{cov_str}\033[0m"
+    return f"\033[92m{cov_str}\033[0m"
+
+
+def _print_fuzz_report_table(report: Any) -> None:
+    """Print fuzz report as a colored table to stderr/stdout."""
+    print(
+        f"\nOverall coverage: {report.overall_coverage:.0%} "
+        f"({report.total_caught}/{report.total_variants} variants detected)"
+    )
+    print(f"Strategies: {', '.join(report.strategies_tested)}\n")
+    header = f"{'Rule ID':<12} {'Coverage':>9} {'Caught':>7} {'Total':>7}  Missed strategies"
+    print(header)
+    print("-" * len(header))
+    for entry in report.results:
+        missed_str = ", ".join(entry.missed_strategies) if entry.missed_strategies else "—"
+        cov_colored = _fuzz_coverage_color(entry.coverage)
+        print(
+            f"{entry.rule_id:<12} {cov_colored:>18} {entry.caught:>7} "
+            f"{entry.total:>7}  {missed_str}"
+        )
+    print()
+    # Highlight rules with low coverage
+    weak = [e for e in report.results if e.coverage < 0.5]
+    if weak:
+        print(f"⚠ {len(weak)} rule(s) with <50% variant coverage — consider expanding patterns:")
+        for e in weak:
+            print(f"  {e.rule_id}: {e.coverage:.0%} — missed: {', '.join(e.missed_strategies)}")
+            if e.sample_misses:
+                print(f"    Example miss: {e.sample_misses[0][:80]!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -1028,44 +1034,68 @@ def _cmd_registry(args: argparse.Namespace) -> int:
         return Ed25519Signer.from_pem(validate_path(opt).read_bytes())
 
     if cmd == "init":
-        TrustRegistry(args.path, operator_signer=_signer(args.operator_key))
-        signed = " (signed)" if args.operator_key else ""
-        print(f"Initialised trust registry at {args.path}{signed}")
-        return 0
-
+        return _registry_init(args, _signer)
     if cmd == "publish":
-        reg = TrustRegistry(args.path, operator_signer=_signer(args.operator_key))
-        pem = validate_path(args.pubkey).read_text()
-        key_id = reg.publish(pem, issuer=args.issuer)
-        print(f"Published {args.issuer!r} -> key_id {key_id}")
-        return 0
-
+        return _registry_publish(args, _signer)
     if cmd == "revoke":
-        reg = TrustRegistry(args.path, operator_signer=_signer(args.operator_key))
-        reg.revoke(args.key_id, reason=args.reason)
-        print(f"Revoked key_id {args.key_id}")
-        return 0
-
+        return _registry_revoke(args, _signer)
     if cmd in ("list", "resolve"):
-        try:
-            reg = _load_registry_from_path(args, trust_registry_cls)
-        except Exception as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-        if cmd == "list":
-            return _registry_list(reg)
-        return _registry_resolve(args, reg, _json)
-
+        return _registry_list_or_resolve(args, cmd, _json, TrustRegistry)
     if cmd == "verify":
-        op_pem = validate_path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
-        reg = TrustRegistry.load(args.path)
-        reg.verify_integrity(operator_public_pem=op_pem)
-        mode = "integrity + operator signature" if op_pem else "integrity (chain)"
-        print(f"Registry OK ({mode}); {len(reg.as_issuer_map())} active issuer(s)")
-        return 0
+        return _registry_verify(args)
 
     print(f"error: unknown registry subcommand {cmd!r}", file=sys.stderr)
     return 2
+
+
+def _registry_init(args: argparse.Namespace, _signer) -> int:
+    from raucle.trust_registry import TrustRegistry
+
+    TrustRegistry(args.path, operator_signer=_signer(args.operator_key))
+    signed = " (signed)" if args.operator_key else ""
+    print(f"Initialised trust registry at {args.path}{signed}")
+    return 0
+
+
+def _registry_publish(args: argparse.Namespace, _signer) -> int:
+    from raucle.trust_registry import TrustRegistry
+
+    reg = TrustRegistry(args.path, operator_signer=_signer(args.operator_key))
+    pem = validate_path(args.pubkey).read_text()
+    key_id = reg.publish(pem, issuer=args.issuer)
+    print(f"Published {args.issuer!r} -> key_id {key_id}")
+    return 0
+
+
+def _registry_revoke(args: argparse.Namespace, _signer) -> int:
+    from raucle.trust_registry import TrustRegistry
+
+    reg = TrustRegistry(args.path, operator_signer=_signer(args.operator_key))
+    reg.revoke(args.key_id, reason=args.reason)
+    print(f"Revoked key_id {args.key_id}")
+    return 0
+
+
+def _registry_list_or_resolve(args: argparse.Namespace, cmd: str, _json, trust_registry_cls) -> int:
+    try:
+        reg = _load_registry_from_path(args, trust_registry_cls)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if cmd == "list":
+        return _registry_list(reg)
+    return _registry_resolve(args, reg, _json)
+
+
+def _registry_verify(args: argparse.Namespace) -> int:
+    from raucle.trust_registry import TrustRegistry
+
+    op_pem = validate_path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
+    reg = TrustRegistry.load(args.path)
+    reg.verify_integrity(operator_public_pem=op_pem)
+    mode = "integrity + operator signature" if op_pem else "integrity (chain)"
+    print(f"Registry OK ({mode}); {len(reg.as_issuer_map())} active issuer(s)")
+    return 0
 
 
 def _render_decision(ev: dict, ts: str, paint, args: argparse.Namespace) -> None:
@@ -1159,7 +1189,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
 def _print_report_errors(report: Any) -> None:
     """Print up to 10 errors from a verification report."""
     if report.errors:
-        print("\nErrors:")
+        print(_ERRORS_HEADER)
         for e in report.errors[:10]:
             print(f"  - {e}")
         if len(report.errors) > 10:
@@ -1186,7 +1216,7 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
         if report.first_invalid_index is not None:
             print(f"  First invalid index:  {report.first_invalid_index}")
         if report.errors:
-            print("\nErrors:")
+            print(_ERRORS_HEADER)
             for e in report.errors[:10]:
                 print(f"  - {e}")
             if len(report.errors) > 10:
@@ -1500,7 +1530,7 @@ def _cmd_provenance_verify(args: argparse.Namespace) -> int:
         if report.tampered_receipts:
             print(f"  Tampered receipts:         {len(report.tampered_receipts)}")
         if report.errors:
-            print("\nErrors:")
+            print(_ERRORS_HEADER)
             for e in report.errors[:10]:
                 print(f"  - {e}")
             if len(report.errors) > 10:

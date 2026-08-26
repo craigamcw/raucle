@@ -308,7 +308,8 @@ _EXPECTED_ALG = "EdDSA"
 _EXPECTED_TYP = "provenance-receipt/v1"
 #: The critical-header marker every genuine receipt carries. Verifiers must
 #: understand every entry in ``crit``; this is the only one we understand.
-_UNDERSTOOD_CRIT = {"raucle/v1"}
+_RAUCLE_V1 = "raucle/v1"
+_UNDERSTOOD_CRIT = {_RAUCLE_V1}
 #: Prefix marking a sanitisation receipt's ``corpus`` removed-taint claim
 #: (``"removed:<tag1>,<tag2>,…"``), used at both build and verify time.
 _REMOVED_PREFIX = "removed:"
@@ -503,7 +504,7 @@ class CapabilityStatement:
 
     def permits_model(self, model: str) -> bool:
         if not self.allowed_models:
-            return True  # empty = unrestricted
+            return True  # empty means unrestricted
         return model in self.allowed_models
 
     def permits_tool(self, tool: str) -> bool:
@@ -703,7 +704,7 @@ class ProvenanceReceipt:
             "alg": _EXPECTED_ALG,
             "typ": _EXPECTED_TYP,
             "kid": identity.key_id,
-            "crit": ["raucle/v1"],
+            "crit": [_RAUCLE_V1],
             "raucle/v1": "provenance",
         }
         signing_input = (
@@ -867,7 +868,7 @@ class ProvenanceReceipt:
             raise ValueError(
                 f"unexpected JOSE typ {header.get('typ')!r} — must be {_EXPECTED_TYP!r}"
             )
-        if header.get("raucle/v1") != "provenance":
+        if header.get(_RAUCLE_V1) != "provenance":
             raise ValueError(
                 f"JOSE header 'raucle/v1' must be 'provenance', got {header.get('raucle/v1')!r}"
             )

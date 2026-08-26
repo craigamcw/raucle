@@ -143,7 +143,7 @@ class TrustRegistry:
         self._authenticated: bool | None = None
         if self._path is not None and self._path.exists():
             self._load_existing()
-        elif not self._entries:
+        else:
             self._append_header()
 
     # -- construction / loading ---------------------------------------------

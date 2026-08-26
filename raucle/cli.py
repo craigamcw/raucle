@@ -26,6 +26,9 @@ from raucle.scanner import MAX_INPUT_BYTES, Scanner
 logger = logging.getLogger(__name__)
 
 _REGISTRY_DESC = "Registry JSONL file"
+_ANSI_RED = "\033[91m"
+_ANSI_YELLOW = "\033[93m"
+_ANSI_GREEN = "\033[92m"
 
 # Repeated argparse help strings, named once (Sonar S1192).
 _HELP_OUTPUT_FORMAT = "Output format"
@@ -844,13 +847,12 @@ def _cmd_rules_fuzz(args: argparse.Namespace) -> int:
         for entry in report.results:
             missed_str = ", ".join(entry.missed_strategies) if entry.missed_strategies else "—"
             cov_str = f"{entry.coverage:.0%}"
-            cov_colored = (
-                f"\033[91m{cov_str}\033[0m"
-                if entry.coverage < 0.5
-                else f"\033[93m{cov_str}\033[0m"
-                if entry.coverage < 0.8
-                else f"\033[92m{cov_str}\033[0m"
-            )
+            if entry.coverage < 0.5:
+                cov_colored = f"\033[91m{cov_str}\033[0m"
+            elif entry.coverage < 0.8:
+                cov_colored = f"\033[93m{cov_str}\033[0m"
+            else:
+                cov_colored = f"\033[92m{cov_str}\033[0m"
             print(
                 f"{entry.rule_id:<12} {cov_colored:>18} {entry.caught:>7} "
                 f"{entry.total:>7}  {missed_str}"
@@ -878,12 +880,12 @@ def _cmd_rules_fuzz(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _load_registry(args: argparse.Namespace, TrustRegistry) -> Any:
+def _load_registry(args: argparse.Namespace, trust_registry_cls) -> Any:
     """Load a TrustRegistry from a path or URL, based on args."""
     if args.registry.startswith("https://"):
         op = validate_path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
-        return TrustRegistry.from_url(args.registry, operator_public_pem=op)
-    return TrustRegistry.load(args.registry)
+        return trust_registry_cls.from_url(args.registry, operator_public_pem=op)
+    return trust_registry_cls.load(args.registry)
 
 
 def _cmd_passport(args: argparse.Namespace) -> int:
@@ -892,21 +894,22 @@ def _cmd_passport(args: argparse.Namespace) -> int:
 
     from raucle.audit import Ed25519Signer
     from raucle.passport import AgentPassport, issue_passport, verify_passport
-    from raucle.trust_registry import TrustRegistry
 
     cmd = getattr(args, "passport_command", None)
     if cmd == "issue":
         return _passport_issue(args, _json, Ed25519Signer, issue_passport)
     if cmd == "verify":
+        from raucle.trust_registry import TrustRegistry
+
         return _passport_verify(args, AgentPassport, verify_passport, TrustRegistry)
 
     print("error: passport needs 'issue' or 'verify'", file=sys.stderr)
     return 2
 
 
-def _passport_issue(args, _json, Ed25519Signer, issue_passport) -> int:
+def _passport_issue(args, _json, ed25519_signer, issue_passport) -> int:
     statement = _json.loads(validate_path(args.statement).read_text())
-    signer = Ed25519Signer.from_pem(validate_path(args.issuer_key).read_bytes())
+    signer = ed25519_signer.from_pem(validate_path(args.issuer_key).read_bytes())
     passport = issue_passport(
         statement, issuer_signer=signer, issuer=args.issuer, ttl_seconds=args.ttl
     )
@@ -919,13 +922,13 @@ def _passport_issue(args, _json, Ed25519Signer, issue_passport) -> int:
     return 0
 
 
-def _passport_verify(args, AgentPassport, verify_passport, TrustRegistry) -> int:
+def _passport_verify(args, agent_passport, verify_passport, trust_registry_cls) -> int:
     try:
-        reg = _load_registry(args, TrustRegistry)
+        reg = _load_registry(args, trust_registry_cls)
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    passport = AgentPassport.load(args.passport)
+    passport = agent_passport.load(args.passport)
     v = verify_passport(passport.to_dict(), registry=reg)
     if v.valid:
         print(f"VALID  {v.agent_id}  (issuer: {v.issuer})")
@@ -977,12 +980,12 @@ def _cmd_compliance(args: argparse.Namespace) -> int:
     return 0
 
 
-def _load_registry_from_path(args: argparse.Namespace, TrustRegistry) -> Any:
+def _load_registry_from_path(args: argparse.Namespace, trust_registry_cls) -> Any:
     """Load a TrustRegistry from args.path (URL or local path)."""
     if args.path.startswith("https://"):
         op = validate_path(args.operator_pubkey).read_bytes() if args.operator_pubkey else None
-        return TrustRegistry.from_url(args.path, operator_public_pem=op)
-    return TrustRegistry.load(args.path)
+        return trust_registry_cls.from_url(args.path, operator_public_pem=op)
+    return trust_registry_cls.load(args.path)
 
 
 def _registry_list(reg: Any) -> int:
@@ -1045,7 +1048,7 @@ def _cmd_registry(args: argparse.Namespace) -> int:
 
     if cmd in ("list", "resolve"):
         try:
-            reg = _load_registry_from_path(args, TrustRegistry)
+            reg = _load_registry_from_path(args, trust_registry_cls)
         except Exception as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -1410,11 +1413,11 @@ def _cmd_mcp_scan(args: argparse.Namespace) -> int:
             print("-" * min(len(header), 120))
             for f in findings:
                 colour = {
-                    "CRITICAL": "\033[91m",
-                    "HIGH": "\033[91m",
-                    "MEDIUM": "\033[93m",
-                    "LOW": "\033[93m",
-                    "INFO": "\033[92m",
+                    "CRITICAL": _ANSI_RED,
+                    "HIGH": _ANSI_RED,
+                    "MEDIUM": _ANSI_YELLOW,
+                    "LOW": _ANSI_YELLOW,
+                    "INFO": _ANSI_GREEN,
                 }.get(f.severity.value, "")
                 sev = f"{colour}{f.severity.value}\033[0m"
                 print(f"{f.rule_id:<24} {sev:<19} {f.tool[:19]:<20} {f.field[:27]:<28} {f.message}")
@@ -1666,7 +1669,7 @@ def _print_multimodal_result(result, path: str | None = None) -> None:
     if result.findings:
         print(f"\nFindings ({len(result.findings)}):")
         for f in result.findings:
-            sev_colour = {"HIGH": "\033[91m", "MEDIUM": "\033[93m", "LOW": "\033[2m"}.get(
+            sev_colour = {"HIGH": _ANSI_RED, "MEDIUM": _ANSI_YELLOW, "LOW": "\033[2m"}.get(
                 f.severity, ""
             )
             print(f"  [{sev_colour}{f.severity}\033[0m] {f.kind}: {f.detail}")

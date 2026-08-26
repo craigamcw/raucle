@@ -17,6 +17,7 @@ source of truth; the ports conform to it.
 Usage:  python reference/conformance.py
 Exit 0 on full agreement, non-zero otherwise.
 """
+
 from __future__ import annotations
 
 import base64
@@ -81,64 +82,64 @@ def emit_python(reqs: list[dict]) -> list[dict]:
             key_id=key_id,
             public_key_pem=pub_pem.decode("ascii"),
         )
-        ident = AgentIdentity(
-            agent_id=rec.agent_id, private_key=priv, statement=stmt
-        )
+        ident = AgentIdentity(agent_id=rec.agent_id, private_key=priv, statement=stmt)
         rec.sign(ident)
         out.append({"jws": rec.jws, "id": rec.receipt_hash})
     return out
 
 
 def r_b64(payload: dict) -> str:
-    raw = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode()
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
 def _run_lines(cmd: list[str], cwd: Path, reqs: list[dict]) -> list[dict]:
     stdin = "\n".join(json.dumps(r) for r in reqs) + "\n"
-    proc = subprocess.run(
-        cmd, cwd=cwd, input=stdin, capture_output=True, text=True
-    )
+    proc = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"{cmd}: {proc.stderr.strip()}")
     return [json.loads(l) for l in proc.stdout.splitlines() if l.strip()]
 
 
 def emit_go(reqs):
-    return _run_lines(
-        ["go", "run", "./cmd/emit"], REF / "provenance-go", reqs
-    )
+    return _run_lines(["go", "run", "./cmd/emit"], REF / "provenance-go", reqs)
 
 
 def emit_rust(reqs):
     subprocess.run(
         ["cargo", "build", "--quiet", "--example", "emit"],
-        cwd=REF / "provenance-rs", check=True, capture_output=True, text=True,
+        cwd=REF / "provenance-rs",
+        check=True,
+        capture_output=True,
+        text=True,
     )
     return _run_lines(
         ["cargo", "run", "--quiet", "--example", "emit"],
-        REF / "provenance-rs", reqs,
+        REF / "provenance-rs",
+        reqs,
     )
 
 
 def emit_ts(reqs):
     return _run_lines(
         ["npx", "--no-install", "tsx", "src/emit-cli.ts"],
-        REF / "provenance-ts", reqs,
+        REF / "provenance-ts",
+        reqs,
     )
 
 
 def emit_csharp(reqs):
     subprocess.run(
         ["dotnet", "build", "--nologo", "-v", "q", "interop/Interop.csproj"],
-        cwd=REF / "provenance-cs", check=True, capture_output=True, text=True,
+        cwd=REF / "provenance-cs",
+        check=True,
+        capture_output=True,
+        text=True,
     )
     return _run_lines(
-        ["dotnet", "run", "--no-build", "--project", "interop/Interop.csproj",
-         "--", "--harness"],
-        REF / "provenance-cs", reqs,
+        ["dotnet", "run", "--no-build", "--project", "interop/Interop.csproj", "--", "--harness"],
+        REF / "provenance-cs",
+        reqs,
     )
 
 
@@ -167,29 +168,8 @@ LANGS = [
 ]
 
 
-def main() -> int:
-    vf = load_vectors()
-    reqs = requests_for(vf)
-    names = [r["name"] for r in reqs]
-    expected = {
-        v["name"]: (v["expected_jws"], v["expected_receipt_hash"])
-        for v in vf["vectors"]
-    }
-
-    all_langs = [lang for lang, _fn, _avail in LANGS]
-    results: dict[str, list[dict]] = {}
-    skipped: list[str] = []
-    for lang, fn, avail in LANGS:
-        if not avail():
-            print(f"SKIP {lang} (toolchain not found)")
-            skipped.append(lang)
-            continue
-        try:
-            results[lang] = fn(reqs)
-        except Exception as exc:  # noqa: BLE001
-            print(f"FAIL {lang}: {exc}")
-            return 2
-
+def _check_byte_identity(names, expected, results) -> bool:
+    """Check byte-identity of emitted receipts vs published vectors."""
     ok = True
     print("\n=== emit byte-identity vs published vectors ===")
     for i, name in enumerate(names):
@@ -204,7 +184,12 @@ def main() -> int:
                 ok = False
         print(f"  {name}: {exp_id}")
         print(f"    {'  '.join(row)}")
+    return ok
 
+
+def _cross_verify(names, expected, results, vf) -> bool:
+    """Cross-verify every emitted JWS using the Python verifier."""
+    ok = True
     print("\n=== cross-verify: every emitted JWS verified by Python ===")
     for i, name in enumerate(names):
         for lang in results:
@@ -220,6 +205,31 @@ def main() -> int:
                 ok = False
     if ok:
         print("  all languages verify in Python with matching ids")
+    return ok
+
+
+def main() -> int:
+    vf = load_vectors()
+    reqs = requests_for(vf)
+    names = [r["name"] for r in reqs]
+    expected = {v["name"]: (v["expected_jws"], v["expected_receipt_hash"]) for v in vf["vectors"]}
+
+    all_langs = [lang for lang, _fn, _avail in LANGS]
+    results: dict[str, list[dict]] = {}
+    skipped: list[str] = []
+    for lang, fn, avail in LANGS:
+        if not avail():
+            print(f"SKIP {lang} (toolchain not found)")
+            skipped.append(lang)
+            continue
+        try:
+            results[lang] = fn(reqs)
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL {lang}: {exc}")
+            return 2
+
+    ok = _check_byte_identity(names, expected, results)
+    ok = _cross_verify(names, expected, results, vf) and ok
 
     print()
     ran = list(results)

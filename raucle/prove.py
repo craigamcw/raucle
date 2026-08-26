@@ -198,6 +198,34 @@ class JSONSchemaProver:
     timeout_ms: int = 5000
 
     @staticmethod
+    def _build_z3_var(z3: Any, name: str, spec: dict, presence: dict, constraints: list) -> Any:
+        """Build a single Z3 variable from a property spec. Returns the z3 var."""
+        t = spec.get("type")
+        if t == "string":
+            var = z3.String(name)
+            if "enum" in spec:
+                enum = spec["enum"]
+                if not all(isinstance(e, str) for e in enum):
+                    raise UnsupportedGrammar(f"enum on {name} must be all strings")
+                constraints.append(
+                    z3.Implies(
+                        presence[name],
+                        z3.Or(*[var == v for v in enum]),
+                    )
+                )
+            return var
+        if t in ("number", "integer"):
+            var = z3.Real(name) if t == "number" else z3.Int(name)
+            if "minimum" in spec:
+                constraints.append(z3.Implies(presence[name], var >= spec["minimum"]))
+            if "maximum" in spec:
+                constraints.append(z3.Implies(presence[name], var <= spec["maximum"]))
+            return var
+        if t == "boolean":
+            return z3.Bool(name)
+        raise UnsupportedGrammar(f"unsupported property type {t!r} on {name}")
+
+    @staticmethod
     def _build_z3_vars(
         z3: Any,
         schema: dict[str, Any],
@@ -213,34 +241,42 @@ class JSONSchemaProver:
         required = set(schema.get("required", []))
 
         for name, spec in schema["properties"].items():
-            t = spec.get("type")
-            prop_types[name] = t
+            prop_types[name] = spec.get("type")
             presence[name] = z3.Bool(f"__present__{name}")
             if name in required:
                 constraints.append(presence[name])
-            if t == "string":
-                z3_vars[name] = z3.String(name)
-                if "enum" in spec:
-                    enum = spec["enum"]
-                    if not all(isinstance(e, str) for e in enum):
-                        raise UnsupportedGrammar(f"enum on {name} must be all strings")
-                    constraints.append(
-                        z3.Implies(
-                            presence[name],
-                            z3.Or(*[z3_vars[name] == v for v in enum]),
-                        )
-                    )
-            elif t in ("number", "integer"):
-                z3_vars[name] = z3.Real(name) if t == "number" else z3.Int(name)
-                if "minimum" in spec:
-                    constraints.append(z3.Implies(presence[name], z3_vars[name] >= spec["minimum"]))
-                if "maximum" in spec:
-                    constraints.append(z3.Implies(presence[name], z3_vars[name] <= spec["maximum"]))
-            elif t == "boolean":
-                z3_vars[name] = z3.Bool(name)
-            else:
-                raise UnsupportedGrammar(f"unsupported property type {t!r} on {name}")
+            z3_vars[name] = JSONSchemaProver._build_z3_var(z3, name, spec, presence, constraints)
         return z3_vars, presence, prop_types
+
+    @staticmethod
+    def _encode_forbidden_values(
+        z3: Any,
+        fld: str,
+        bads: list,
+        z3_vars: dict[str, Any],
+        presence: dict[str, Any],
+        prop_types: dict[str, str],
+        additional_allowed: bool,
+        notes: list[str],
+    ) -> list[Any]:
+        """Encode forbidden_values for a single field as Z3 violations."""
+        if fld not in z3_vars:
+            if not additional_allowed:
+                notes.append(
+                    f"forbidden_values field {fld!r} not in schema; "
+                    f"additionalProperties:false makes it unreachable"
+                )
+                return []
+            z3_vars[fld] = z3.String(fld)
+            presence[fld] = z3.Bool(f"__present__{fld}")
+            prop_types[fld] = "string"
+            notes.append(
+                f"forbidden_values field {fld!r} not declared but "
+                f"additionalProperties allows it; modelled as a free field"
+            )
+        elif prop_types.get(fld) != "string":
+            raise UnsupportedGrammar(f"forbidden_values on non-string field {fld!r} not supported")
+        return [z3.And(presence[fld], z3_vars[fld] == bad) for bad in bads]
 
     @staticmethod
     def _encode_policy_violations(
@@ -256,26 +292,11 @@ class JSONSchemaProver:
         violations: list[Any] = []
 
         for fld, bads in policy.get("forbidden_values", {}).items():
-            if fld not in z3_vars:
-                if not additional_allowed:
-                    notes.append(
-                        f"forbidden_values field {fld!r} not in schema; "
-                        f"additionalProperties:false makes it unreachable"
-                    )
-                    continue
-                z3_vars[fld] = z3.String(fld)
-                presence[fld] = z3.Bool(f"__present__{fld}")
-                prop_types[fld] = "string"
-                notes.append(
-                    f"forbidden_values field {fld!r} not declared but "
-                    f"additionalProperties allows it; modelled as a free field"
+            violations.extend(
+                JSONSchemaProver._encode_forbidden_values(
+                    z3, fld, bads, z3_vars, presence, prop_types, additional_allowed, notes
                 )
-            elif prop_types.get(fld) != "string":
-                raise UnsupportedGrammar(
-                    f"forbidden_values on non-string field {fld!r} not supported"
-                )
-            for bad in bads:
-                violations.append(z3.And(presence[fld], z3_vars[fld] == bad))
+            )
 
         for fld, bound in policy.get("max_value", {}).items():
             if fld not in z3_vars or prop_types.get(fld) not in ("number", "integer"):

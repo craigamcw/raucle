@@ -1121,6 +1121,56 @@ def _render_verdict(ev: dict, ts: str, paint, args: argparse.Namespace) -> None:
     print(f"{ts}  {paint(f'{verdict:10s}', code)}  scan  {ev.get('kind', 'scan')}{detail}")
 
 
+def _watch_extract(line: str, _json) -> dict | None:
+    """Extract the event dict from a JSONL line (chain record, ECS, or raw)."""
+    try:
+        rec = _json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(rec, dict):
+        return None
+    if "raucle" in rec and isinstance(rec["raucle"], dict):  # ECS doc
+        return rec["raucle"]
+    if "event" in rec and isinstance(rec["event"], dict):  # chain record
+        return rec["event"]
+    return rec
+
+
+def _watch_is_meta(ev: dict) -> bool:
+    """Return True if the event is chain metadata (not user-visible)."""
+    return "chain_meta" in ev or "checkpoint" in ev
+
+
+def _watch_render(ev: dict, paint, args: argparse.Namespace) -> None:
+    """Render a single audit event (decision, verdict, or generic)."""
+    ts = str(ev.get("timestamp", ""))[:19]
+    if "decision" in ev:
+        _render_decision(ev, ts, paint, args)
+    elif "verdict" in ev:
+        _render_verdict(ev, ts, paint, args)
+    elif not _watch_is_meta(ev):
+        print(f"{ts}  {ev.get('kind', 'event')}")
+
+
+def _watch_follow(fh, paint, _json, args: argparse.Namespace) -> int:
+    """Follow the file handle for new events until Ctrl-C."""
+    import time as _time
+
+    print(paint("-- watching for new events (Ctrl-C to stop) --", "2"))
+    try:
+        while True:
+            line = fh.readline()
+            if not line:
+                _time.sleep(0.3)
+                continue
+            ev = _watch_extract(line, _json)
+            if ev is not None and not _watch_is_meta(ev):
+                _watch_render(ev, paint, args)
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
 def _cmd_watch(args: argparse.Namespace) -> int:
     """Tail an audit-chain or SIEM JSONL file and render decisions live.
 
@@ -1128,7 +1178,6 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     raw event lines, or ECS documents (original event under "raucle").
     """
     import json as _json
-    import time as _time
 
     path = validate_path(args.path, must_exist=False)
     if not path.exists():
@@ -1140,50 +1189,14 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     def paint(text: str, code: str) -> str:
         return f"\x1b[{code}m{text}\x1b[0m" if use_color else text
 
-    def extract(line: str) -> dict | None:
-        try:
-            rec = _json.loads(line)
-        except ValueError:
-            return None
-        if not isinstance(rec, dict):
-            return None
-        if "raucle" in rec and isinstance(rec["raucle"], dict):  # ECS doc
-            return rec["raucle"]
-        if "event" in rec and isinstance(rec["event"], dict):  # chain record
-            return rec["event"]
-        return rec
-
-    def render(ev: dict) -> None:
-        ts = str(ev.get("timestamp", ""))[:19]
-        if "decision" in ev:
-            _render_decision(ev, ts, paint, args)
-        elif "verdict" in ev:
-            _render_verdict(ev, ts, paint, args)
-        elif not rec_is_meta(ev):
-            print(f"{ts}  {ev.get('kind', 'event')}")
-
-    def rec_is_meta(ev: dict) -> bool:
-        return "chain_meta" in ev or "checkpoint" in ev
-
     with open(path, encoding="utf-8") as fh:
         for line in fh:
-            ev = extract(line)
-            if ev is not None and not rec_is_meta(ev):
-                render(ev)
+            ev = _watch_extract(line, _json)
+            if ev is not None and not _watch_is_meta(ev):
+                _watch_render(ev, paint, args)
         if args.no_follow:
             return 0
-        print(paint("-- watching for new events (Ctrl-C to stop) --", "2"))
-        try:
-            while True:
-                line = fh.readline()
-                if not line:
-                    _time.sleep(0.3)
-                    continue
-                ev = extract(line)
-                if ev is not None and not rec_is_meta(ev):
-                    render(ev)
-        except KeyboardInterrupt:
-            return 0
+        return _watch_follow(fh, paint, _json, args)
 
 
 def _print_report_errors(report: Any) -> None:
@@ -1215,12 +1228,7 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
         print(f"  Invalid signatures:   {report.invalid_signatures}")
         if report.first_invalid_index is not None:
             print(f"  First invalid index:  {report.first_invalid_index}")
-        if report.errors:
-            print(_ERRORS_HEADER)
-            for e in report.errors[:10]:
-                print(f"  - {e}")
-            if len(report.errors) > 10:
-                print(f"  … and {len(report.errors) - 10} more")
+        _print_report_errors(report)
     return 0 if report.valid else 2
 
 
@@ -1490,12 +1498,15 @@ def _cmd_provenance_keygen(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_provenance_verify(args: argparse.Namespace) -> int:
-    from raucle.provenance import CapabilityStatement, ProvenanceVerifier
+def _load_provenance_pubkeys(
+    sources: list[str],
+) -> tuple[dict[str, bytes], dict[str, Any]]:
+    """Load public keys from JSON capability statements or raw PEM files."""
+    from raucle.provenance import CapabilityStatement
 
     public_keys: dict[str, bytes] = {}
     capabilities: dict[str, CapabilityStatement] = {}
-    for src in args.pubkeys:
+    for src in sources:
         path = Path(src)
         content = path.read_bytes()
         # Try JSON capability statement first; fall back to raw PEM.
@@ -1513,6 +1524,26 @@ def _cmd_provenance_verify(args: argparse.Namespace) -> int:
 
             key_id = hashlib.sha256(content).hexdigest()[:16]
             public_keys[key_id] = content
+    return public_keys, capabilities
+
+
+def _print_provenance_report(report: Any) -> None:
+    """Print a provenance verification report in human-readable format."""
+    status = "\033[92mVALID\033[0m" if report.valid else "\033[91mINVALID\033[0m"
+    print(f"Provenance chain: {status}")
+    print(f"  Receipts:                  {report.receipt_count}")
+    print(f"  Signature failures:        {report.signature_failures}")
+    print(f"  Parent-link failures:      {report.parent_link_failures}")
+    print(f"  Taint monotonicity fails:  {report.taint_monotonicity_failures}")
+    if report.tampered_receipts:
+        print(f"  Tampered receipts:         {len(report.tampered_receipts)}")
+    _print_report_errors(report)
+
+
+def _cmd_provenance_verify(args: argparse.Namespace) -> int:
+    from raucle.provenance import ProvenanceVerifier
+
+    public_keys, capabilities = _load_provenance_pubkeys(args.pubkeys)
 
     report = ProvenanceVerifier(
         public_keys=public_keys, capabilities=capabilities or None
@@ -1521,22 +1552,35 @@ def _cmd_provenance_verify(args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps(report.to_dict(), indent=2))
     else:
-        status = "\033[92mVALID\033[0m" if report.valid else "\033[91mINVALID\033[0m"
-        print(f"Provenance chain: {status}")
-        print(f"  Receipts:                  {report.receipt_count}")
-        print(f"  Signature failures:        {report.signature_failures}")
-        print(f"  Parent-link failures:      {report.parent_link_failures}")
-        print(f"  Taint monotonicity fails:  {report.taint_monotonicity_failures}")
-        if report.tampered_receipts:
-            print(f"  Tampered receipts:         {len(report.tampered_receipts)}")
-        if report.errors:
-            print(_ERRORS_HEADER)
-            for e in report.errors[:10]:
-                print(f"  - {e}")
-            if len(report.errors) > 10:
-                print(f"  … and {len(report.errors) - 10} more")
+        _print_provenance_report(report)
 
     return 0 if report.valid else 2
+
+
+def _receipt_detail(r) -> str:
+    """Build a detail string from receipt fields."""
+    detail_parts: list[str] = []
+    if r.model:
+        detail_parts.append(f"model={r.model}")
+    if r.tool:
+        detail_parts.append(f"tool={r.tool}")
+    if r.corpus:
+        detail_parts.append(f"corpus={r.corpus}")
+    if r.guardrail_verdict:
+        detail_parts.append(f"verdict={r.guardrail_verdict}")
+    return ", ".join(detail_parts) or "—"
+
+
+def _print_provenance_trace_table(receipts: list, receipt_hash: str) -> None:
+    """Print the DAG ancestor trace as a table."""
+    print(f"\nDAG ancestors of {receipt_hash} ({len(receipts)} receipts):\n")
+    header = f"{'Operation':<18} {'Agent':<32} {'Detail':<28} {'Receipt':<20}"
+    print(header)
+    print("-" * len(header))
+    for r in receipts:
+        detail = _receipt_detail(r)
+        short = r.receipt_hash.split(":")[-1][:16]
+        print(f"{r.operation.value:<18} {r.agent_id[:31]:<32} {detail[:27]:<28} {short:<20}")
 
 
 def _cmd_provenance_trace(args: argparse.Namespace) -> int:
@@ -1552,23 +1596,7 @@ def _cmd_provenance_trace(args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps([r.to_dict() for r in receipts], indent=2))
     else:
-        print(f"\nDAG ancestors of {args.receipt_hash} ({len(receipts)} receipts):\n")
-        header = f"{'Operation':<18} {'Agent':<32} {'Detail':<28} {'Receipt':<20}"
-        print(header)
-        print("-" * len(header))
-        for r in receipts:
-            detail_parts: list[str] = []
-            if r.model:
-                detail_parts.append(f"model={r.model}")
-            if r.tool:
-                detail_parts.append(f"tool={r.tool}")
-            if r.corpus:
-                detail_parts.append(f"corpus={r.corpus}")
-            if r.guardrail_verdict:
-                detail_parts.append(f"verdict={r.guardrail_verdict}")
-            detail = ", ".join(detail_parts) or "—"
-            short = r.receipt_hash.split(":")[-1][:16]
-            print(f"{r.operation.value:<18} {r.agent_id[:31]:<32} {detail[:27]:<28} {short:<20}")
+        _print_provenance_trace_table(receipts, args.receipt_hash)
     return 0
 
 

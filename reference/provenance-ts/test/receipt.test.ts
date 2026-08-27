@@ -32,6 +32,67 @@ function basePayload(over: Partial<ReceiptPayload> = {}): ReceiptPayload {
     ...over,
   }
 }
+interface IdentityResolutionVector {
+  name: string
+  description: string
+  expected_identity_result: 'PASS' | 'FAIL'
+  human_principal_id: string
+  human_principal_login: string
+  identity_issuer: string
+  identity_resolution_method: string
+  asserted_artifact_author: string
+  pusher_principal_id: string
+  ambient_identifier: string
+  ambient_namespace: string
+}
+
+function identityAssuranceResult(
+  payload: ReceiptPayload,
+): 'PASS' | 'FAIL' {
+  if (payload['x_identity_resolution_method'] !== 'platform_api') {
+    return 'FAIL'
+  }
+
+  if (
+    typeof payload['x_human_principal_id'] !== 'string' ||
+    payload['x_human_principal_id'].length === 0
+  ) {
+    return 'FAIL'
+  }
+
+  if (
+    payload['x_human_principal_id'] !==
+    payload['x_pusher_principal_id']
+  ) {
+    return 'FAIL'
+  }
+  if (
+    typeof payload['x_asserted_artifact_author'] !== 'string' ||
+    payload['x_asserted_artifact_author'].length === 0
+  ) {
+    return 'FAIL'
+  }
+
+  if (
+    typeof payload['x_human_principal_login'] !== 'string' ||
+    payload['x_human_principal_login'].length === 0
+  ) {
+    return 'FAIL'
+  }
+
+  const expectedArtifactAuthor =
+    `${payload['x_human_principal_id']}+` +
+    `${payload['x_human_principal_login']}@platform.noreply.example`
+
+  if (
+    payload['x_asserted_artifact_author'] !==
+    expectedArtifactAuthor
+  ) {
+    return 'FAIL'
+  }
+
+  return 'PASS'
+}
 
 // ── canonical ────────────────────────────────────────────────────
 
@@ -209,6 +270,85 @@ test('sanitisation undeclared drop fails', async () => {
     privateKey,
   )
   assert.throws(() => buildChain([r1, bad]), /corpus removed-set/)
+})
+
+// ── principal identity resolution policy ─────────────────────────
+
+test('principal resolution policy vectors preserve cryptographic validity while enforcing identity assurance', async () => {
+  const vectorsPath = join(
+    here,
+    '..',
+    '..',
+    '..',
+    'docs',
+    'spec',
+    'provenance',
+    'v1',
+    'test-vectors.json',
+  )
+
+  const vf = JSON.parse(readFileSync(vectorsPath, 'utf8')) as {
+    identity_resolution_policy_vectors: IdentityResolutionVector[]
+  }
+
+  assert.ok(vf.identity_resolution_policy_vectors.length > 0)
+
+  for (const v of vf.identity_resolution_policy_vectors) {
+    const { privateKey, publicKey } = await genKey()
+
+    const payload = basePayload()
+
+    payload['x_human_principal_id'] = v.human_principal_id
+    payload['x_human_principal_login'] = v.human_principal_login
+    payload['x_identity_issuer'] = v.identity_issuer
+    payload['x_identity_resolution_method'] =
+      v.identity_resolution_method
+    payload['x_asserted_artifact_author'] =
+      v.asserted_artifact_author
+    payload['x_pusher_principal_id'] =
+      v.pusher_principal_id
+    payload['x_ambient_identifier'] =
+      v.ambient_identifier
+    payload['x_ambient_namespace'] =
+      v.ambient_namespace
+
+    const emitted = await emit(payload, privateKey)
+    const verified = await verify(emitted.jws, publicKey)
+
+    assert.equal(
+      verified.id,
+      emitted.id,
+      `${v.name}: cryptographic receipt verification failed`,
+    )
+
+    assert.equal(
+      identityAssuranceResult(verified.payload),
+      v.expected_identity_result,
+      `${v.name}: unexpected identity assurance result`,
+    )
+  }
+})
+
+test('ambient OS username collision does not establish platform principal identity', async () => {
+  const { privateKey, publicKey } = await genKey()
+
+  const payload = basePayload()
+
+  payload['x_human_principal_id'] = '99887766'
+  payload['x_human_principal_login'] = 'alex.j.smith'
+  payload['x_identity_issuer'] = 'SOURCE_CONTROL_PLATFORM'
+  payload['x_identity_resolution_method'] = 'ambient_os_username'
+  payload['x_ambient_namespace'] = 'os_username'
+  payload['x_ambient_identifier'] = 'asmith'
+  payload['x_asserted_artifact_author'] =
+    'asmith@platform.noreply.example'
+  payload['x_pusher_principal_id'] = '99887766'
+
+  const emitted = await emit(payload, privateKey)
+  const verified = await verify(emitted.jws, publicKey)
+
+  assert.equal(verified.id, emitted.id)
+  assert.equal(identityAssuranceResult(verified.payload), 'FAIL')
 })
 
 // ── shared cross-language conformance: the published test vectors ──

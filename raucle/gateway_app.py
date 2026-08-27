@@ -102,13 +102,13 @@ def create_gateway_app(gateway: RaucleGateway) -> FastAPI:
 
     @app.get("/health")
     def health(authorization: str | None = Header(None)) -> dict[str, str]:
-        if gateway.config.health_key:
+        if gateway.config.health_check_token:
             key = authorization or ""
             if key.startswith("Bearer "):
                 key = key[7:]
             import hmac as _hmac
 
-            if not _hmac.compare_digest(key, gateway.config.health_key):
+            if not _hmac.compare_digest(key, gateway.config.health_check_token):
                 raise HTTPException(status_code=401, detail="Health check unauthorized")
         return {"status": "ok"}
 
@@ -150,13 +150,13 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
     # --- Health (optional auth via health_key) ---
     @app.get("/health")
     def admin_health(authorization: str | None = Header(None)) -> dict[str, str]:
-        if gateway.config.health_key:
+        if gateway.config.health_check_token:
             key = authorization or ""
             if key.startswith("Bearer "):
                 key = key[7:]
             import hmac as _hmac
 
-            if not _hmac.compare_digest(key, gateway.config.health_key):
+            if not _hmac.compare_digest(key, gateway.config.health_check_token):
                 raise HTTPException(status_code=401, detail="Health check unauthorized")
         return {"status": "ok"}
 

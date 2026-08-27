@@ -53,7 +53,7 @@ class GatewayConfig:
     port: int = 8080
     admin_port: int = 8081
     admin_api_key: str = ""
-    health_key: str = ""  # if set, /health requires this key
+    health_check_token: str = ""  # if set, /health requires this token
 
     # Signer
     signer_backend: str = "local"  # local, aws, azure, vault
@@ -92,7 +92,7 @@ class GatewayConfig:
             port=int(os.environ.get("RAUCLE_GATEWAY_PORT", "8080")),
             admin_port=int(os.environ.get("RAUCLE_ADMIN_PORT", "8081")),
             admin_api_key=os.environ.get("RAUCLE_ADMIN_KEY", ""),
-            health_key=os.environ.get("RAUCLE_HEALTH_KEY", ""),
+            health_check_token=os.environ.get("RAUCLE_HEALTH_KEY", ""),
             signer_backend=os.environ.get("RAUCLE_SIGNER", "local"),
             kms_key_id=os.environ.get("RAUCLE_KMS_KEY_ID", ""),
             kms_region=os.environ.get("AWS_REGION", "eu-west-1"),

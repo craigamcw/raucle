@@ -32,6 +32,10 @@ class GateRequest(BaseModel):
     tool: str = Field(..., description="Tool name to call")
     args: dict[str, Any] = Field(default_factory=dict, description="Tool call arguments")
     agent_id: str = Field(default="", description="Agent identity (optional, defaults to policy)")
+    source: str = Field(default="", description="Inbound source (agent name, IP, or service ID)")
+    destination: str = Field(
+        default="", description="Outbound destination (API endpoint, service, or tool target)"
+    )
 
 
 class PolicyUpdateRequest(BaseModel):
@@ -73,7 +77,9 @@ def create_gateway_app(gateway: RaucleGateway) -> FastAPI:
     @app.post("/gate")
     def gate_tool_call(req: GateRequest) -> dict[str, Any]:
         """Gate a tool call. Returns allow/deny/escalate decision."""
-        return gateway.check_tool_call(req.tool, req.args, req.agent_id)
+        return gateway.check_tool_call(
+            req.tool, req.args, req.agent_id, req.source, req.destination
+        )
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -126,14 +132,69 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         check_access(user, "stats")
         return gateway.get_stats()
 
+    # --- Connections (live flow log) ---
+    @app.get("/api/connections")
+    def get_connections(
+        limit: int = 100,
+        tool: str = "",
+        decision: str = "",
+        source: str = "",
+        destination: str = "",
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        """Return recent connections, optionally filtered."""
+        user = check_auth(authorization)
+        check_access(user, "stats")
+        connections = gateway.get_connections(limit=500)
+        # Apply filters
+        if tool:
+            connections = [c for c in connections if tool.lower() in c.get("tool", "").lower()]
+        if decision:
+            connections = [
+                c for c in connections if decision.lower() in c.get("decision", "").lower()
+            ]
+        if source:
+            connections = [c for c in connections if source.lower() in c.get("source", "").lower()]
+        if destination:
+            connections = [
+                c for c in connections if destination.lower() in c.get("destination", "").lower()
+            ]
+        return {"connections": connections[:limit], "count": len(connections)}
+
     # --- Policy Management ---
     @app.get("/api/policies")
-    def get_policies(authorization: str | None = Header(None)) -> dict[str, Any]:
+    def get_policies(
+        file: str = "",
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        """Get policy file content. If policy_dir is set, list all files."""
         user = check_auth(authorization)
         check_access(user, "policies")
-        policy_path = Path(gateway.config.policy_file)
-        content = policy_path.read_text() if policy_path.exists() else ""
-        return {"content": content, "path": str(policy_path)}
+        if gateway.config.policy_dir:
+            pdir = Path(gateway.config.policy_dir)
+            if not pdir.is_dir():
+                return {"content": "", "files": [], "mode": "dir", "path": str(pdir)}
+            files = sorted(pdir.glob("*.yaml"))
+            file_list = [{"name": f.name, "path": str(f), "size": f.stat().st_size} for f in files]
+            if file:
+                target = Path(file)
+                if not target.is_file():
+                    raise HTTPException(404, f"File not found: {file}")
+                content = target.read_text(encoding="utf-8")
+            elif files:
+                content = files[0].read_text(encoding="utf-8")
+            else:
+                content = ""
+            return {"content": content, "files": file_list, "mode": "dir", "path": str(pdir)}
+        else:
+            policy_path = Path(gateway.config.policy_file)
+            content = policy_path.read_text() if policy_path.exists() else ""
+            return {
+                "content": content,
+                "files": [{"name": policy_path.name, "path": str(policy_path)}],
+                "mode": "single",
+                "path": str(policy_path),
+            }
 
     @app.put("/api/policies")
     def update_policies(
@@ -297,7 +358,7 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
   .tab { padding: 10px 20px; cursor: pointer; color: var(--muted);
     border-bottom: 2px solid transparent; }
   .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
-  .content { padding: var(--pad); max-width: 1200px; margin: 0 auto; }
+  .content { padding: var(--pad); max-width: 1400px; margin: 0 auto; }
   .card { background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; padding: var(--pad); margin-bottom: var(--pad); }
   .card h2 { font-size: 14px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; }
@@ -318,13 +379,41 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
     border-radius: 4px; cursor: pointer; font-size: 13px; }
   .btn:hover { opacity: 0.9; }
   .btn.danger { background: var(--red); }
+  .btn.secondary { background: var(--border); }
   .actions { display: flex; gap: 8px; margin-top: 12px; }
   .login { max-width: 400px; margin: 80px auto; }
-  .input { width: 100%; padding: 8px 12px; background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 4px; font-size: 14px; margin-bottom: 12px; }
+  .input { padding: 8px 12px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; font-size: 14px; }
   .hidden { display: none; }
   pre { background: var(--bg); padding: 12px; border-radius: 4px;
     border: 1px solid var(--border); overflow-x: auto; font-size: 12px; }
+  .badge-allow { background: var(--green); color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+  .badge-deny { background: var(--red); color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+  .badge-escalate { background: var(--yellow); color: #1a1a1a; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-bar .input { width: auto; min-width: 120px; }
+  .filter-bar select { padding: 8px 12px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; font-size: 14px; }
+  .flow-viz { display: flex; align-items: center; justify-content: center; gap: 0;
+    padding: 20px 0; flex-wrap: wrap; }
+  .flow-node { background: var(--bg); border: 2px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; min-width: 120px; text-align: center; }
+  .flow-node.source { border-color: var(--accent); }
+  .flow-node.gate { border-color: var(--yellow); }
+  .flow-node.dest { border-color: var(--green); }
+  .flow-node .label { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
+  .flow-node .value { font-size: 14px; font-weight: 600; }
+  .flow-arrow { color: var(--muted); font-size: 24px; padding: 0 8px; }
+  .flow-decision { font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 4px; margin-top: 4px; }
+  .conn-row { cursor: pointer; transition: background 0.15s; }
+  .conn-row:hover { background: rgba(47, 129, 247, 0.08); }
+  .conn-row.selected { background: rgba(47, 129, 247, 0.15); }
+  .conn-table { max-height: 400px; overflow-y: auto; }
+  .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .toggle input { width: 16px; height: 16px; }
 </style>
 </head>
 <body>
@@ -335,63 +424,120 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
 <div id="login" class="content login">
   <div class="card">
     <h2>Authentication</h2>
-    <input class="input" id="apiKey" type="password" placeholder="Admin API Key" />
-    <button class="btn" onclick="login()">Login</button>
+    <input class="input" id="apiKey" type="password" placeholder="Admin API Key" style="width:100%">
+    <div style="margin-top:12px"><button class="btn" onclick="login()">Login</button></div>
   </div>
 </div>
 <div id="main" class="hidden">
   <div class="tabs">
-    <div class="tab active" onclick="showTab('dashboard')">Dashboard</div>
-    <div class="tab" onclick="showTab('policies')">Policies</div>
-    <div class="tab" onclick="showTab('receipts')">Receipts</div>
-    <div class="tab" onclick="showTab('siem')">SIEM</div>
-    <div class="tab" onclick="showTab('users')">Users</div>
-    <div class="tab" onclick="showTab('config')">Config</div>
+    <div class="tab active" onclick="showTab('dashboard',this)">Dashboard</div>
+    <div class="tab" onclick="showTab('connections',this)">Connections</div>
+    <div class="tab" onclick="showTab('policies',this)">Policies</div>
+    <div class="tab" onclick="showTab('receipts',this)">Receipts</div>
+    <div class="tab" onclick="showTab('siem',this)">SIEM</div>
+    <div class="tab" onclick="showTab('users',this)">Users</div>
+    <div class="tab" onclick="showTab('config',this)">Config</div>
   </div>
   <div class="content">
+    <!-- DASHBOARD -->
     <div id="tab-dashboard">
       <div class="card"><h2>Gate Decisions</h2>
         <div class="stats-grid" id="statsGrid"></div>
       </div>
       <div class="card"><h2>By Tool</h2>
-        <table id="toolTable"><thead><tr><th>Tool</th><th>Allow</th><th>Deny</th></tr></thead><tbody></tbody></table>
+        <table id="toolTable"><thead><tr><th>Tool</th><th>Allow</th><th>Deny</th><th>Escalate</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
+
+    <!-- CONNECTIONS -->
+    <div id="tab-connections" class="hidden">
+      <div class="card">
+        <h2><span class="live-dot"></span>Live Connection Flow</h2>
+        <div class="flow-viz" id="flowViz">
+          <div class="flow-node source">
+            <div class="label">Source</div>
+            <div class="value" id="flowSource">--</div>
+          </div>
+          <div class="flow-arrow">&#8594;</div>
+          <div class="flow-node gate">
+            <div class="label">Policy / Gate</div>
+            <div class="value" id="flowPolicy">--</div>
+            <div class="flow-decision" id="flowDecision">--</div>
+          </div>
+          <div class="flow-arrow">&#8594;</div>
+          <div class="flow-node dest">
+            <div class="label">Destination</div>
+            <div class="value" id="flowDest">--</div>
+          </div>
+        </div>
+        <div style="text-align:center;color:var(--muted);font-size:12px;margin-top:8px" id="flowTimestamp">No connections yet</div>
+      </div>
+      <div class="card">
+        <h2>Connection Log</h2>
+        <div class="filter-bar">
+          <select id="filterDecision">
+            <option value="">All Decisions</option>
+            <option value="allow">Allow</option>
+            <option value="deny">Deny</option>
+            <option value="escalate">Escalate</option>
+          </select>
+          <input class="input" id="filterTool" placeholder="Filter by tool...">
+          <input class="input" id="filterSource" placeholder="Filter by source...">
+          <input class="input" id="filterDest" placeholder="Filter by destination...">
+          <button class="btn secondary" onclick="clearFilters()">Clear</button>
+          <label class="toggle"><input type="checkbox" id="liveMode" checked onchange="loadConnections()"> Live update</label>
+        </div>
+        <div class="conn-table">
+          <table id="connTable">
+            <thead><tr><th>Time</th><th>Source</th><th>Tool</th><th>Policy</th><th>Decision</th><th>Destination</th><th>Reason</th><th>Latency</th></tr></thead>
+            <tbody id="connBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- POLICIES -->
     <div id="tab-policies" class="hidden">
       <div class="card"><h2>Policy File</h2>
         <textarea class="editor" id="policyEditor"></textarea>
         <div class="actions">
           <button class="btn" onclick="validatePolicy()">Validate</button>
           <button class="btn" onclick="savePolicy()">Save & Deploy</button>
-          <button class="btn" onclick="reloadPolicy()">Reload</button>
+          <button class="btn secondary" onclick="reloadPolicy()">Reload</button>
         </div>
       </div>
     </div>
+
+    <!-- RECEIPTS -->
     <div id="tab-receipts" class="hidden">
-      <div class="card"><h2>Recent Receipts</h2>
-        <pre id="receiptsView">Loading...</pre>
-      </div>
+      <div class="card"><h2>Recent Receipts</h2><pre id="receiptsView">Loading...</pre></div>
     </div>
+
+    <!-- SIEM -->
     <div id="tab-siem" class="hidden">
       <div class="card"><h2>SIEM Forwarding</h2>
-        <label><input type="checkbox" id="siemEnabled"> Enabled</label><br><br>
-        <input class="input" id="siemBackend" placeholder="splunk / elastic / sentinel">
-        <input class="input" id="siemUrl" placeholder="SIEM endpoint URL">
-        <input class="input" id="siemToken" type="password" placeholder="SIEM token">
+        <label class="toggle"><input type="checkbox" id="siemEnabled"> Enabled</label><br><br>
+        <input class="input" id="siemBackend" placeholder="splunk / elastic / sentinel" style="width:200px;margin-bottom:8px"><br>
+        <input class="input" id="siemUrl" placeholder="SIEM endpoint URL" style="width:400px;margin-bottom:8px"><br>
+        <input class="input" id="siemToken" type="password" placeholder="SIEM token" style="width:400px;margin-bottom:8px"><br>
         <button class="btn" onclick="saveSIEM()">Save</button>
       </div>
     </div>
+
+    <!-- USERS -->
     <div id="tab-users" class="hidden">
       <div class="card"><h2>Add User</h2>
-        <input class="input" id="newKey" placeholder="API Key">
-        <input class="input" id="newRole" placeholder="admin / operator / auditor">
-        <input class="input" id="newName" placeholder="Name">
+        <input class="input" id="newKey" placeholder="API Key" style="width:300px;margin-bottom:8px"><br>
+        <input class="input" id="newRole" placeholder="admin / operator / auditor" style="width:200px;margin-bottom:8px"><br>
+        <input class="input" id="newName" placeholder="Name" style="width:200px;margin-bottom:8px"><br>
         <button class="btn" onclick="addUser()">Add</button>
       </div>
       <div class="card"><h2>Users</h2>
         <table id="userTable"><thead><tr><th>Key</th><th>Role</th><th>Name</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
+
+    <!-- CONFIG -->
     <div id="tab-config" class="hidden">
       <div class="card"><h2>Configuration</h2><pre id="configView"></pre></div>
     </div>
@@ -399,6 +545,8 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
 </div>
 <script>
 let key = '';
+let connPollId = null;
+
 function login() {
   key = document.getElementById('apiKey').value;
   fetch('/api/stats', {headers: {'Authorization': key}})
@@ -406,20 +554,28 @@ function login() {
       document.getElementById('main').classList.remove('hidden'); loadAll(); }
       else { alert('Invalid API key'); } });
 }
-function showTab(t) {
+
+function showTab(t, el) {
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('[id^=tab-]').forEach(x => x.classList.add('hidden'));
-  event.target.classList.add('active');
+  el.classList.add('active');
   document.getElementById('tab-' + t).classList.remove('hidden');
   if (t === 'dashboard') loadStats();
+  if (t === 'connections') { loadConnections(); startConnPolling(); }
+  else { stopConnPolling(); }
   if (t === 'policies') loadPolicy();
   if (t === 'receipts') loadReceipts();
   if (t === 'siem') loadSIEM();
   if (t === 'users') loadUsers();
   if (t === 'config') loadConfig();
 }
+
+function api(path, opts) {
+  return fetch(path, {...(opts||{}), headers: {'Authorization': key, ...((opts||{}).headers||{})}});
+}
+
 function loadAll() { loadStats(); }
-function api(path, opts) { return fetch(path, {...opts, headers: {'Authorization': key, ...((opts||{}).headers||{})}}); }
+
 function loadStats() {
   api('/api/stats').then(r=>r.json()).then(d=>{
     document.getElementById('statsGrid').innerHTML =
@@ -427,11 +583,88 @@ function loadStats() {
       `<div class="stat allow"><div class="value">${d.allowed}</div><div class="label">Allowed</div></div>` +
       `<div class="stat deny"><div class="value">${d.denied}</div><div class="label">Denied</div></div>` +
       `<div class="stat escalate"><div class="value">${d.escalated}</div><div class="label">Escalated</div></div>` +
-      `<div class="stat"><div class="value">${d.avg_latency_us}</div><div class="label">Avg Latency (us)</div></div>`;
+      `<div class="stat"><div class="value">${d.avg_latency_us || 0}</div><div class="label">Avg Latency (us)</div></div>`;
     let tb = document.querySelector('#toolTable tbody'); tb.innerHTML='';
-    Object.entries(d.tools||{}).forEach(([t,s])=>tb.innerHTML+=`<tr><td>${t}</td><td>${s.allow||0}</td><td>${s.deny||0}</td></tr>`);
+    Object.entries(d.tools||{}).forEach(([t,s])=>tb.innerHTML+=`<tr><td>${t}</td><td>${s.allow||0}</td><td>${s.deny||0}</td><td>${s.escalate||0}</td></tr>`);
   });
 }
+
+// --- CONNECTIONS ---
+function loadConnections() {
+  let params = new URLSearchParams({limit: 200});
+  let fd = document.getElementById('filterDecision').value;
+  let ft = document.getElementById('filterTool').value;
+  let fs = document.getElementById('filterSource').value;
+  let fde = document.getElementById('filterDest').value;
+  if (fd) params.set('decision', fd);
+  if (ft) params.set('tool', ft);
+  if (fs) params.set('source', fs);
+  if (fde) params.set('destination', fde);
+  api('/api/connections?' + params.toString()).then(r=>r.json()).then(d=>{
+    let tb = document.getElementById('connBody');
+    tb.innerHTML = '';
+    (d.connections||[]).forEach((c,i) => {
+      let badge = c.decision === 'allow' ? 'badge-allow' : c.decision === 'deny' ? 'badge-deny' : 'badge-escalate';
+      let time = c.timestamp ? c.timestamp.substring(11,19) : '--:--:--';
+      let policy = c.policy ? c.policy.split('/').pop() : '--';
+      tb.innerHTML += `<tr class="conn-row" onclick="selectConn(${i})" data-idx="${i}">
+        <td>${time}</td><td>${c.source||'--'}</td><td>${c.tool||'--'}</td>
+        <td>${policy}</td><td><span class="${badge}">${c.decision}</span></td>
+        <td>${c.destination||'--'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${c.reason||''}</td>
+        <td>${c.latency_us||0}us</td></tr>`;
+    });
+    // Auto-update flow viz with most recent connection
+    if (d.connections && d.connections.length > 0) {
+      updateFlowViz(d.connections[0]);
+    }
+    // Store for row selection
+    window._conns = d.connections || [];
+  }).catch(()=>{});
+}
+
+function selectConn(idx) {
+  document.querySelectorAll('.conn-row').forEach(r => r.classList.remove('selected'));
+  let row = document.querySelector(`.conn-row[data-idx="${idx}"]`);
+  if (row) row.classList.add('selected');
+  if (window._conns && window._conns[idx]) {
+    updateFlowViz(window._conns[idx]);
+  }
+}
+
+function updateFlowViz(c) {
+  document.getElementById('flowSource').textContent = c.source || '--';
+  document.getElementById('flowDest').textContent = c.destination || '--';
+  let policy = c.policy ? c.policy.split('/').pop() : c.tool || '--';
+  document.getElementById('flowPolicy').textContent = policy;
+  let decEl = document.getElementById('flowDecision');
+  decEl.textContent = c.decision || '--';
+  decEl.className = 'flow-decision ' + (c.decision === 'allow' ? 'badge-allow' : c.decision === 'deny' ? 'badge-deny' : 'badge-escalate');
+  document.getElementById('flowTimestamp').textContent = c.timestamp || '';
+}
+
+function clearFilters() {
+  document.getElementById('filterDecision').value = '';
+  document.getElementById('filterTool').value = '';
+  document.getElementById('filterSource').value = '';
+  document.getElementById('filterDest').value = '';
+  loadConnections();
+}
+
+function startConnPolling() {
+  stopConnPolling();
+  let live = document.getElementById('liveMode');
+  connPollId = setInterval(() => {
+    if (live && live.checked && !document.getElementById('tab-connections').classList.contains('hidden')) {
+      loadConnections();
+    }
+  }, 3000);
+}
+
+function stopConnPolling() {
+  if (connPollId) { clearInterval(connPollId); connPollId = null; }
+}
+
+// --- POLICIES ---
 function loadPolicy() { api('/api/policies').then(r=>r.json()).then(d=>{document.getElementById('policyEditor').value=d.content;}); }
 function validatePolicy() {
   api('/api/policies/validate',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -444,8 +677,12 @@ function savePolicy() {
     .then(r=>r.json()).then(d=>alert('Saved: '+JSON.stringify(d)));
 }
 function reloadPolicy() { api('/api/policies/reload',{method:'POST'}).then(r=>r.json()).then(d=>alert('Reloaded: '+JSON.stringify(d))); }
+
+// --- RECEIPTS ---
 function loadReceipts() { api('/api/receipts?limit=20').then(r=>r.json()).then(d=>{
   document.getElementById('receiptsView').textContent=JSON.stringify(d.receipts,null,2);}); }
+
+// --- SIEM ---
 function loadSIEM() { api('/api/siem').then(r=>r.json()).then(d=>{
   document.getElementById('siemEnabled').checked=d.enabled;
   document.getElementById('siemBackend').value=d.backend||'';
@@ -457,6 +694,8 @@ function saveSIEM() {
       url:document.getElementById('siemUrl').value,
       token:document.getElementById('siemToken').value})}).then(r=>r.json()).then(d=>alert('Saved'));
 }
+
+// --- USERS ---
 function loadUsers() { api('/api/users').then(r=>r.json()).then(d=>{
   let tb=document.querySelector('#userTable tbody');tb.innerHTML='';
   d.users.forEach(u=>tb.innerHTML+=`<tr><td>${u.api_key}</td><td>${u.role}</td><td>${u.name||''}</td></tr>`);}); }
@@ -465,9 +704,12 @@ function addUser() {
     body:JSON.stringify({api_key:document.getElementById('newKey').value,
       role:document.getElementById('newRole').value,
       name:document.getElementById('newName').value})}).then(r=>r.json()).then(d=>{alert('Added');loadUsers();}); }
+
+// --- CONFIG ---
 function loadConfig() { api('/api/config').then(r=>r.json()).then(d=>{
   document.getElementById('configView').textContent=JSON.stringify(d,null,2);}); }
-setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden'))loadStats();},5000);
+
+setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden') && !document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);
 </script>
 </body>
 </html>"""

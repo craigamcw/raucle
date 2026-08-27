@@ -57,6 +57,25 @@ class PolicyRule:
     constraints: dict[str, Any] = field(default_factory=dict)
     description: str = ""
     require_approval_when: dict[str, Any] | None = None
+    # Source/destination matching: the policy only applies when the
+    # inbound source and outbound destination match these patterns.
+    # Empty string or "*" means "match anything".
+    source: str = ""
+    destination: str = ""
+    # The file this rule was loaded from (for admin panel display).
+    source_file: str = ""
+
+    def matches(self, source: str, destination: str) -> bool:
+        """Check if this rule applies to the given source/destination."""
+        import fnmatch
+
+        if self.source and self.source != "*":
+            if not fnmatch.fnmatch(source or "", self.source):
+                return False
+        if self.destination and self.destination != "*":
+            if not fnmatch.fnmatch(destination or "", self.destination):
+                return False
+        return True
 
     def to_mint_kwargs(self) -> dict[str, Any]:
         """Convert to kwargs for CapabilityIssuer.mint()."""
@@ -158,6 +177,8 @@ class PolicyFile:
                 constraints=rule_data.get("constraints", {}),
                 description=rule_data.get("description", ""),
                 require_approval_when=rule_data.get("require_approval_when"),
+                source=rule_data.get("source", ""),
+                destination=rule_data.get("destination", ""),
             )
             if not rule.tool:
                 raise ValueError(f"Policy rule {i}: 'tool' is required")
@@ -186,6 +207,8 @@ class PolicyFile:
                         if r.require_approval_when
                         else {}
                     ),
+                    **({"source": r.source} if r.source else {}),
+                    **({"destination": r.destination} if r.destination else {}),
                 }
                 for r in self.policies
             ],

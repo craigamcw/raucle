@@ -42,6 +42,49 @@ curl -X POST http://localhost:8081/api/policies/reload \
 | `forbidden_combinations` | `forbidden_field_combinations` | Mutually exclusive field pairs |
 | `require_approval_when` | (escalation) | Human-in-the-loop threshold |
 
+## Source/Destination Matching
+
+Each policy rule can specify `source` and `destination` match patterns.
+The gateway only applies the rule if the inbound tool call matches both
+patterns. This lets you load multiple policy files and have each file
+govern traffic for specific sources or destinations.
+
+```yaml
+policies:
+  - tool: transfer_money
+    source: "agent:payments*"        # only payments agents
+    destination: "swift-network*"    # only SWIFT transfers
+    agent_id: agent:payments-bot
+    constraints:
+      allow:
+        from_account: ["ACC-001"]
+```
+
+Patterns support `*` and `?` wildcards (fnmatch). Empty or `"*"`
+means "match anything". The gateway finds the **first matching rule**
+for each tool call, checking all loaded policy files in order.
+
+## Multiple Policy Files
+
+Set `RAUCLE_POLICY_DIR` to a directory containing multiple `.yaml` files.
+The gateway loads all of them and matches tool calls by source/destination:
+
+```bash
+# Load all policy files from /etc/raucle/policies/
+RAUCLE_POLICY_DIR=/etc/raucle/policies/
+
+# Or use a single file (default)
+RAUCLE_POLICY_FILE=/etc/raucle/policies.yaml
+```
+
+Example directory structure:
+```
+/etc/raucle/policies/
+  banking.yaml          # banking and payments policies
+  healthcare.yaml       # medical and clinical policies
+  enterprise-ops.yaml   # cloud, database, security operations
+```
+
 ## Approval Thresholds
 
 The `require_approval_when` key triggers human approval before execution.

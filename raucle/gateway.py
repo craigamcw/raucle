@@ -61,6 +61,7 @@ class GatewayConfig:
 
     # Policy
     policy_file: str = "/etc/raucle/policies.yaml"
+    policy_dir: str = ""  # if set, loads all *.yaml files from this directory
 
     # Receipts
     receipt_store: str = "/data/receipts.jsonl"
@@ -90,6 +91,7 @@ class GatewayConfig:
             kms_key_id=os.environ.get("RAUCLE_KMS_KEY_ID", ""),
             kms_region=os.environ.get("AWS_REGION", "eu-west-1"),
             policy_file=os.environ.get("RAUCLE_POLICY_FILE", "/etc/raucle/policies.yaml"),
+            policy_dir=os.environ.get("RAUCLE_POLICY_DIR", ""),
             receipt_store=os.environ.get("RAUCLE_RECEIPT_STORE", "/data/receipts.jsonl"),
             audit_chain=os.environ.get("RAUCLE_AUDIT_CHAIN", "/data/audit.jsonl"),
             siem_enabled=os.environ.get("RAUCLE_Siem_ENABLED", "").lower() in ("1", "true", "yes"),
@@ -326,6 +328,8 @@ class RaucleGateway:
         self._issuer: Any = None
         self._gate: Any = None
         self._receipt_writer = None
+        self._connection_log: list[dict[str, Any]] = []
+        self._max_log_size = 500
 
         # Bootstrap from config
         self._init_signer()
@@ -363,27 +367,87 @@ class RaucleGateway:
         )
 
     def _load_policies(self) -> None:
-        """Load policies from the configured YAML file."""
-        path = Path(self.config.policy_file)
-        if not path.exists():
-            logger.info("No policy file at %s, running with no policies", path)
+        """Load policies from a file or directory of YAML files.
+
+        If ``policy_dir`` is set, loads all ``*.yaml`` files from that
+        directory. Otherwise loads the single ``policy_file``.
+
+        Each policy rule can specify ``source`` and ``destination`` match
+        patterns. When a tool call arrives, the gateway finds the first
+        matching rule (by source/destination) for that tool.
+        """
+        from raucle.policy import PolicyFile
+
+        all_rules: list[Any] = []
+        files_to_load: list[Path] = []
+
+        if self.config.policy_dir:
+            pdir = Path(self.config.policy_dir)
+            if pdir.is_dir():
+                files_to_load = sorted(pdir.glob("*.yaml"))
+                if not files_to_load:
+                    logger.info("No YAML files in %s", pdir)
+            else:
+                logger.warning("Policy dir %s does not exist", pdir)
+        else:
+            pfile = Path(self.config.policy_file)
+            if pfile.exists():
+                files_to_load = [pfile]
+
+        if not files_to_load:
+            logger.info("No policy files found, running with no policies")
             return
 
-        try:
-            from raucle.policy import PolicyFile, mint_from_policy
+        for fpath in files_to_load:
+            try:
+                pf = PolicyFile.load(fpath)
+                for rule in pf.policies:
+                    rule.source_file = str(fpath)
+                all_rules.extend(pf.policies)
+                logger.info(
+                    "Loaded %d rules from %s (issuer=%s)",
+                    len(pf.policies),
+                    fpath.name,
+                    pf.issuer,
+                )
+            except Exception as exc:
+                logger.error("Failed to load %s: %s", fpath, exc)
 
-            policy = PolicyFile.load(path)
-            self._tokens = mint_from_policy(policy, self._issuer)
-            self._policy_rules = {r.tool: r for r in policy.policies}
-            logger.info("Loaded %d policy rules from %s", len(self._policy_rules), path)
-        except Exception as exc:
-            logger.error("Failed to load policies: %s", exc)
+        # Build token cache: mint a token for each unique (tool, source, destination) rule
+        self._policy_rules = {}
+        self._tokens = {}
+        self._all_rules = all_rules
+
+        for rule in all_rules:
+            # Key rules by tool for lookup, but we'll also match by source/destination
+            key = rule.tool
+            if key not in self._policy_rules:
+                self._policy_rules[key] = []
+            self._policy_rules[key].append(rule)
+
+        # Mint tokens for all rules
+        for rule in all_rules:
+            if rule.tool not in self._tokens:
+                try:
+                    kwargs = rule.to_mint_kwargs()
+                    self._tokens[rule.tool] = self._issuer.mint(**kwargs)
+                except Exception as exc:
+                    logger.error("Failed to mint token for %s: %s", rule.tool, exc)
+
+        logger.info(
+            "Total: %d rules across %d files, %d tools",
+            len(all_rules),
+            len(files_to_load),
+            len(self._tokens),
+        )
 
     def check_tool_call(
         self,
         tool: str,
         args: dict[str, Any],
         agent_id: str = "",
+        source: str = "",
+        destination: str = "",
     ) -> dict[str, Any]:
         """Gate a tool call. Returns decision dict.
 
@@ -392,9 +456,14 @@ class RaucleGateway:
                 "decision": "allow" | "deny" | "escalate",
                 "reason": str,
                 "tool": str,
+                "agent_id": str,
+                "source": str,
+                "destination": str,
+                "policy": str | None,
                 "args_hash": str,
                 "receipt_id": str | None,
                 "latency_us": int,
+                "timestamp": str,
             }
         """
         start = time.perf_counter()
@@ -403,11 +472,16 @@ class RaucleGateway:
             "tool": tool,
             "decision": "deny",
             "reason": "unknown tool",
+            "agent_id": agent_id,
+            "source": source or agent_id or "unknown",
+            "destination": destination or tool,
+            "policy": None,
             "args_hash": "",
             "receipt_id": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-        if tool not in self._tokens:
+        if tool not in self._policy_rules or tool not in self._tokens:
             result["reason"] = f"no policy configured for tool '{tool}'"
             self.stats.record(tool, "deny", int((time.perf_counter() - start) * 1e6))
             self.siem.forward(
@@ -420,10 +494,31 @@ class RaucleGateway:
                 }
             )
             result["latency_us"] = int((time.perf_counter() - start) * 1e6)
+            self._log_connection(result)
             return result
 
+        # Find the matching rule for this source/destination
+        rules_for_tool = self._policy_rules[tool]
+        matched_rule: Any = None
+        for rule in rules_for_tool:
+            if rule.matches(source, destination):
+                matched_rule = rule
+                break
+
+        if matched_rule is None:
+            result["reason"] = (
+                f"no policy for tool '{tool}' matching "
+                f"source='{source}' destination='{destination}'"
+            )
+            self.stats.record(tool, "deny", int((time.perf_counter() - start) * 1e6))
+            result["latency_us"] = int((time.perf_counter() - start) * 1e6)
+            self._log_connection(result)
+            return result
+
+        # Re-mint token for the matched rule (in case constraints differ)
         token = self._tokens[tool]
-        actual_agent_id = agent_id or token.agent_id
+        actual_agent_id = agent_id or matched_rule.agent_id
+        result["policy"] = matched_rule.source_file or tool
 
         # Gate check
         decision = self._gate.check(
@@ -437,7 +532,7 @@ class RaucleGateway:
             # Check if approval is needed
             from raucle.policy import check_approval_needed
 
-            rule = self._policy_rules.get(tool)
+            rule = matched_rule
             if rule and check_approval_needed(rule, args):
                 result["decision"] = "escalate"
                 result["reason"] = "requires human approval"
@@ -467,16 +562,47 @@ class RaucleGateway:
         )
 
         result["latency_us"] = latency_us
+        result["agent_id"] = actual_agent_id
+
+        # Log connection for admin panel
+        self._log_connection(result)
+
         return result
 
     def get_stats(self) -> dict[str, Any]:
         return self.stats.summary()
 
+    def _log_connection(self, result: dict[str, Any]) -> None:
+        """Add a connection record to the in-memory ringbuffer."""
+        entry = {
+            "timestamp": result.get("timestamp", ""),
+            "source": result.get("source", ""),
+            "destination": result.get("destination", ""),
+            "tool": result.get("tool", ""),
+            "agent_id": result.get("agent_id", ""),
+            "policy": result.get("policy"),
+            "decision": result.get("decision", ""),
+            "reason": result.get("reason", ""),
+            "latency_us": result.get("latency_us", 0),
+        }
+        self._connection_log.append(entry)
+        if len(self._connection_log) > self._max_log_size:
+            self._connection_log.pop(0)
+
+    def get_connections(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent connections (most recent first)."""
+        return list(reversed(self._connection_log[-limit:]))
+
     def reload_policies(self) -> dict[str, Any]:
-        """Hot-reload policies from the config file."""
+        """Hot-reload policies from the config file or directory."""
         try:
             self._load_policies()
-            return {"status": "ok", "policies": len(self._policy_rules)}
+            total_rules = getattr(self, "_all_rules", [])
+            return {
+                "status": "ok",
+                "rules": len(total_rules),
+                "tools": len(self._tokens),
+            }
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
 

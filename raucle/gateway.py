@@ -280,7 +280,12 @@ class UserManager:
         return user
 
     def get_user(self, api_key: str) -> GatewayUser | None:
-        return self._users.get(api_key)
+        import hmac as _hmac
+
+        for stored_key, user in self._users.items():
+            if _hmac.compare_digest(stored_key, api_key):
+                return user
+        return None
 
     def list_users(self) -> list[GatewayUser]:
         return list(self._users.values())
@@ -518,7 +523,7 @@ class RaucleGateway:
         # Re-mint token for the matched rule (in case constraints differ)
         token = self._tokens[tool]
         actual_agent_id = agent_id or matched_rule.agent_id
-        result["policy"] = matched_rule.source_file or tool
+        result["policy"] = Path(matched_rule.source_file).name if matched_rule.source_file else tool
 
         # Gate check
         decision = self._gate.check(

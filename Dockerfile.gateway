@@ -19,14 +19,19 @@ COPY raucle/ raucle/
 # Install raucle with gateway extras
 RUN pip install --no-cache-dir -e ".[dev,compliance,rules]"
 
-# Create data directories
-RUN mkdir -p /data /etc/raucle
+# Create data directories and non-root user
+RUN mkdir -p /data /etc/raucle && \
+    useradd -r -s /sbin/nologin -d /app raucle && \
+    chown -R raucle:raucle /app /data /etc/raucle
+
+USER raucle
 
 # Default config
 ENV RAUCLE_GATEWAY_HOST=0.0.0.0
 ENV RAUCLE_GATEWAY_PORT=8080
 ENV RAUCLE_ADMIN_PORT=8081
-ENV RAUCLE_ADMIN_KEY=changeme
+ENV RAUCLE_ADMIN_KEY=
+# ADMIN KEY MUST be set at runtime via -e RAUCLE_ADMIN_KEY=your-key
 ENV RAUCLE_SIGNER=local
 ENV RAUCLE_POLICY_FILE=/etc/raucle/policies.yaml
 ENV RAUCLE_RECEIPT_STORE=/data/receipts.jsonl

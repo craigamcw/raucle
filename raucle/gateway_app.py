@@ -177,9 +177,12 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             files = sorted(pdir.glob("*.yaml"))
             file_list = [{"name": f.name, "path": str(f), "size": f.stat().st_size} for f in files]
             if file:
-                target = Path(file)
+                # SECURITY: restrict file access to the policy directory only
+                target = Path(file).resolve()
+                if not str(target).startswith(str(pdir.resolve())):
+                    raise HTTPException(403, "Access denied: file outside policy directory")
                 if not target.is_file():
-                    raise HTTPException(404, f"File not found: {file}")
+                    raise HTTPException(404, f"File not found: {Path(file).name}")
                 content = target.read_text(encoding="utf-8")
             elif files:
                 content = files[0].read_text(encoding="utf-8")
@@ -257,6 +260,7 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             "enabled": gateway.siem.enabled,
             "backend": gateway.siem.backend,
             "url": gateway.siem.url,
+            "token_configured": bool(gateway.siem.token),
             "buffered_events": len(gateway.siem.buffered_events()),
         }
 
@@ -590,6 +594,8 @@ function loadStats() {
 }
 
 // --- CONNECTIONS ---
+function esc(s) { return s ? s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : '--'; }
+
 function loadConnections() {
   let params = new URLSearchParams({limit: 200});
   let fd = document.getElementById('filterDecision').value;
@@ -608,9 +614,9 @@ function loadConnections() {
       let time = c.timestamp ? c.timestamp.substring(11,19) : '--:--:--';
       let policy = c.policy ? c.policy.split('/').pop() : '--';
       tb.innerHTML += `<tr class="conn-row" onclick="selectConn(${i})" data-idx="${i}">
-        <td>${time}</td><td>${c.source||'--'}</td><td>${c.tool||'--'}</td>
-        <td>${policy}</td><td><span class="${badge}">${c.decision}</span></td>
-        <td>${c.destination||'--'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${c.reason||''}</td>
+        <td>${esc(time)}</td><td>${esc(c.source)}</td><td>${esc(c.tool)}</td>
+        <td>${esc(policy)}</td><td><span class="${badge}">${esc(c.decision)}</span></td>
+        <td>${esc(c.destination)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.reason)}</td>
         <td>${c.latency_us||0}us</td></tr>`;
     });
     // Auto-update flow viz with most recent connection

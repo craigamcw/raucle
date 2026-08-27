@@ -45,7 +45,10 @@ dependencies = []
 [project.optional-dependencies]
 rules = ["pyyaml>=6.0"]
 ml = ["transformers>=4.30", "torch>=2.0"]
-server = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "pydantic>=2.0"]
+server = [
+    "fastapi>=0.100", "uvicorn[standard]>=0.20", "pydantic>=2.0",
+    "slowapi>=0.1.9",     # Rate limiting for gateway endpoints
+]
 compliance = ["cryptography>=42.0"]
 agent-framework = ["agent-framework>=1.0"]
 langchain = ["langchain-core>=0.3"]

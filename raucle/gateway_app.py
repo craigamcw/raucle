@@ -11,8 +11,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from raucle.gateway import (
@@ -73,16 +73,43 @@ def create_gateway_app(gateway: RaucleGateway) -> FastAPI:
         description="AI agent governance gateway",
         version="0.1.0",
     )
+    _limiter = None
+    try:
+        from slowapi import Limiter
+        from slowapi.errors import RateLimitExceeded
+        from slowapi.middleware import SlowAPIMiddleware
+        from slowapi.util import get_remote_address
+
+        _limiter = Limiter(key_func=get_remote_address, default_limits=["1000/minute"])
+        app.state.limiter = _limiter
+        app.add_exception_handler(
+            RateLimitExceeded,
+            lambda req, exc: JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded", "retry_after": "60"},
+            ),
+        )
+        app.add_middleware(SlowAPIMiddleware)
+    except ImportError:
+        pass  # slowapi not installed, no rate limiting
 
     @app.post("/gate")
-    def gate_tool_call(req: GateRequest) -> dict[str, Any]:
+    def gate_tool_call(request: Request, req: GateRequest) -> dict[str, Any]:
         """Gate a tool call. Returns allow/deny/escalate decision."""
         return gateway.check_tool_call(
             req.tool, req.args, req.agent_id, req.source, req.destination
         )
 
     @app.get("/health")
-    def health() -> dict[str, str]:
+    def health(authorization: str | None = Header(None)) -> dict[str, str]:
+        if gateway.config.health_key:
+            key = authorization or ""
+            if key.startswith("Bearer "):
+                key = key[7:]
+            import hmac as _hmac
+
+            if not _hmac.compare_digest(key, gateway.config.health_key):
+                raise HTTPException(status_code=401, detail="Health check unauthorized")
         return {"status": "ok"}
 
     return app
@@ -120,9 +147,17 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
                 status_code=403, detail=f"Role '{user.role}' cannot access '{resource}'"
             )
 
-    # --- Health (no auth) ---
+    # --- Health (optional auth via health_key) ---
     @app.get("/health")
-    def health() -> dict[str, str]:
+    def admin_health(authorization: str | None = Header(None)) -> dict[str, str]:
+        if gateway.config.health_key:
+            key = authorization or ""
+            if key.startswith("Bearer "):
+                key = key[7:]
+            import hmac as _hmac
+
+            if not _hmac.compare_digest(key, gateway.config.health_key):
+                raise HTTPException(status_code=401, detail="Health check unauthorized")
         return {"status": "ok"}
 
     # --- Dashboard / Stats ---

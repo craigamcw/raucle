@@ -53,6 +53,7 @@ class GatewayConfig:
     port: int = 8080
     admin_port: int = 8081
     admin_api_key: str = ""
+    health_key: str = ""  # if set, /health requires this key
 
     # Signer
     signer_backend: str = "local"  # local, aws, azure, vault
@@ -73,6 +74,10 @@ class GatewayConfig:
     siem_url: str = ""
     siem_token: str = ""
 
+    # Audit log persistence
+    audit_persist: bool = False  # persist connection log to disk
+    audit_log_file: str = "/data/gateway-audit.jsonl"
+
     # Compliance
     compliance_framework: str = "eu-ai-act"  # eu-ai-act, iso-42001, soc2
 
@@ -87,6 +92,7 @@ class GatewayConfig:
             port=int(os.environ.get("RAUCLE_GATEWAY_PORT", "8080")),
             admin_port=int(os.environ.get("RAUCLE_ADMIN_PORT", "8081")),
             admin_api_key=os.environ.get("RAUCLE_ADMIN_KEY", ""),
+            health_key=os.environ.get("RAUCLE_HEALTH_KEY", ""),
             signer_backend=os.environ.get("RAUCLE_SIGNER", "local"),
             kms_key_id=os.environ.get("RAUCLE_KMS_KEY_ID", ""),
             kms_region=os.environ.get("AWS_REGION", "eu-west-1"),
@@ -98,6 +104,9 @@ class GatewayConfig:
             siem_backend=os.environ.get("RAUCLE_Siem_BACKEND", ""),
             siem_url=os.environ.get("RAUCLE_Siem_URL", ""),
             siem_token=os.environ.get("RAUCLE_Siem_TOKEN", ""),
+            audit_persist=os.environ.get("RAUCLE_AUDIT_PERSIST", "").lower()
+            in ("1", "true", "yes"),
+            audit_log_file=os.environ.get("RAUCLE_AUDIT_LOG", "/data/gateway-audit.jsonl"),
             compliance_framework=os.environ.get("RAUCLE_COMPLIANCE_FRAMEWORK", "eu-ai-act"),
             registry_path=os.environ.get("RAUCLE_REGISTRY_PATH", "/data/registry.jsonl"),
         )
@@ -260,6 +269,13 @@ class GatewayUser:
     api_key: str
     role: str  # admin, operator, auditor
     name: str = ""
+    created_at: float = field(default_factory=lambda: time.time())
+    expires_at: float | None = None  # None = never expires
+
+    def is_expired(self) -> bool:
+        if self.expires_at is None:
+            return False
+        return time.time() > self.expires_at
 
 
 class UserManager:
@@ -269,13 +285,22 @@ class UserManager:
     - admin: full access (policies, users, config, stats, receipts)
     - operator: policies, stats, receipts (no user management)
     - auditor: stats, receipts (read-only)
+
+    Keys can have an optional expiry timestamp (Unix epoch seconds).
+    Expired keys are automatically rejected on authentication.
     """
 
     def __init__(self) -> None:
         self._users: dict[str, GatewayUser] = {}
 
-    def add_user(self, api_key: str, role: str, name: str = "") -> GatewayUser:
-        user = GatewayUser(api_key=api_key, role=role, name=name)
+    def add_user(
+        self,
+        api_key: str,
+        role: str,
+        name: str = "",
+        expires_at: float | None = None,
+    ) -> GatewayUser:
+        user = GatewayUser(api_key=api_key, role=role, name=name, expires_at=expires_at)
         self._users[api_key] = user
         return user
 
@@ -284,6 +309,8 @@ class UserManager:
 
         for stored_key, user in self._users.items():
             if _hmac.compare_digest(stored_key, api_key):
+                if user.is_expired():
+                    return None
                 return user
         return None
 
@@ -578,7 +605,7 @@ class RaucleGateway:
         return self.stats.summary()
 
     def _log_connection(self, result: dict[str, Any]) -> None:
-        """Add a connection record to the in-memory ringbuffer."""
+        """Add a connection record to the in-memory ringbuffer and optionally disk."""
         entry = {
             "timestamp": result.get("timestamp", ""),
             "source": result.get("source", ""),
@@ -593,6 +620,18 @@ class RaucleGateway:
         self._connection_log.append(entry)
         if len(self._connection_log) > self._max_log_size:
             self._connection_log.pop(0)
+
+        # Persist to disk if enabled
+        if self.config.audit_persist:
+            try:
+                import json as _json
+
+                log_path = Path(self.config.audit_log_file)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(_json.dumps(entry) + "\n")
+            except Exception as exc:
+                logger.warning("Failed to persist audit log: %s", exc)
 
     def get_connections(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent connections (most recent first)."""

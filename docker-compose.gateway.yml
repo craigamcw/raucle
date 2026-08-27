@@ -1,4 +1,20 @@
-version: "3.9"
+# Raucle Gateway - Production Docker Compose with TLS and network isolation.
+#
+# Services:
+#   - raucle-gateway: The gateway + admin panel (internal only, no host ports)
+#   - caddy: TLS termination reverse proxy (exposes 443 to host)
+#
+# The gateway container is NOT exposed to the host directly. All traffic
+# goes through Caddy, which provides TLS, security headers, and rate limiting.
+#
+# Required environment variables (set in .env or -e):
+#   RAUCLE_ADMIN_KEY    Admin panel API key (required, no default)
+#   RAUCLE_DOMAIN       Your domain name (e.g. raucle.example.com)
+#   RAUCLE_SIGNER       Signer backend: local, aws, azure, vault
+#
+# Optional:
+#   RAUCLE_POLICY_DIR   Directory of policy YAML files (multi-policy mode)
+#   RAUCLE_KMS_KEY_ID   AWS KMS key ID (if signer=aws)
 
 services:
   raucle-gateway:
@@ -6,28 +22,31 @@ services:
       context: .
       dockerfile: Dockerfile.gateway
     container_name: raucle-gateway
-    ports:
-      - "8080:8080"  # Gateway API (agent -> tools)
-      - "8081:8081"  # Admin panel
     environment:
       - RAUCLE_GATEWAY_HOST=0.0.0.0
       - RAUCLE_GATEWAY_PORT=8080
       - RAUCLE_ADMIN_PORT=8081
-      - RAUCLE_ADMIN_KEY=${RAUCLE_ADMIN_KEY:-changeme}
+      - RAUCLE_ADMIN_KEY=${RAUCLE_ADMIN_KEY:?RAUCLE_ADMIN_KEY is required}
       - RAUCLE_SIGNER=${RAUCLE_SIGNER:-local}
       - RAUCLE_KMS_KEY_ID=${RAUCLE_KMS_KEY_ID:-}
       - AWS_REGION=${AWS_REGION:-eu-west-1}
+      - RAUCLE_POLICY_DIR=/etc/raucle/policies
       - RAUCLE_POLICY_FILE=/etc/raucle/policies.yaml
       - RAUCLE_RECEIPT_STORE=/data/receipts.jsonl
       - RAUCLE_AUDIT_CHAIN=/data/audit.jsonl
+      - RAUCLE_AUDIT_PERSIST=true
+      - RAUCLE_AUDIT_LOG=/data/gateway-audit.jsonl
       - RAUCLE_COMPLIANCE_FRAMEWORK=${RAUCLE_COMPLIANCE_FRAMEWORK:-eu-ai-act}
+      - RAUCLE_HEALTH_KEY=${RAUCLE_HEALTH_KEY:-}
       - RAUCLE_Siem_ENABLED=${RAUCLE_Siem_ENABLED:-false}
       - RAUCLE_Siem_BACKEND=${RAUCLE_Siem_BACKEND:-}
       - RAUCLE_Siem_URL=${RAUCLE_Siem_URL:-}
       - RAUCLE_Siem_TOKEN=${RAUCLE_Siem_TOKEN:-}
     volumes:
-      - ./policies.yaml:/etc/raucle/policies.yaml:ro
+      - ./policies:/etc/raucle/policies:ro
       - raucle-data:/data
+    networks:
+      - raucle-internal
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
@@ -35,5 +54,30 @@ services:
       timeout: 5s
       retries: 3
 
+  caddy:
+    image: caddy:2-alpine
+    container_name: raucle-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - DOMAIN=${RAUCLE_DOMAIN:-localhost}
+    networks:
+      - raucle-internal
+    depends_on:
+      - raucle-gateway
+    restart: unless-stopped
+
+networks:
+  raucle-internal:
+    driver: bridge
+    internal: false  # Caddy needs outbound for Let's Encrypt
+
 volumes:
   raucle-data:
+  caddy-data:
+  caddy-config:

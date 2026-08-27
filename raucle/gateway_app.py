@@ -380,377 +380,295 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Raucle Gateway Admin</title>
+<title>Raucle Gateway</title>
 <style>
-  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #7d8590; --border: #30363d;
-    --accent: #2f81f7; --green: #3fb950; --red: #f85149; --yellow: #d29922;
-    --card: #161b22; --pad: 16px; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: var(--bg); color: var(--fg); }
-  .header { background: var(--card); border-bottom: 1px solid var(--border);
-    padding: 12px var(--pad); display: flex; align-items: center; gap: 12px; }
-  .header h1 { font-size: 18px; font-weight: 600; }
-  .header .badge { background: var(--accent); color: white; padding: 2px 8px;
-    border-radius: 4px; font-size: 12px; }
-  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); }
-  .tab { padding: 10px 20px; cursor: pointer; color: var(--muted);
-    border-bottom: 2px solid transparent; }
-  .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
-  .content { padding: var(--pad); max-width: 1400px; margin: 0 auto; }
-  .card { background: var(--card); border: 1px solid var(--border);
-    border-radius: 8px; padding: var(--pad); margin-bottom: var(--pad); }
-  .card h2 { font-size: 14px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; }
-  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--pad); }
-  .stat { text-align: center; }
-  .stat .value { font-size: 32px; font-weight: 700; }
-  .stat .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  .stat.allow .value { color: var(--green); }
-  .stat.deny .value { color: var(--red); }
-  .stat.escalate .value { color: var(--yellow); }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
-  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; }
-  .editor { width: 100%; height: 400px; background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 4px; padding: 12px;
-    font-family: monospace; font-size: 13px; resize: vertical; }
-  .btn { background: var(--accent); color: white; border: none; padding: 8px 16px;
-    border-radius: 4px; cursor: pointer; font-size: 13px; }
-  .btn:hover { opacity: 0.9; }
-  .btn.danger { background: var(--red); }
-  .btn.secondary { background: var(--border); }
-  .actions { display: flex; gap: 8px; margin-top: 12px; }
-  .login { max-width: 400px; margin: 80px auto; }
-  .input { padding: 8px 12px; background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 4px; font-size: 14px; }
-  .hidden { display: none; }
-  pre { background: var(--bg); padding: 12px; border-radius: 4px;
-    border: 1px solid var(--border); overflow-x: auto; font-size: 12px; }
-  .badge-allow { background: var(--green); color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
-  .badge-deny { background: var(--red); color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
-  .badge-escalate { background: var(--yellow); color: #1a1a1a; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
-  .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-  .filter-bar .input { width: auto; min-width: 120px; }
-  .filter-bar select { padding: 8px 12px; background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 4px; font-size: 14px; }
-  .flow-viz { display: flex; align-items: center; justify-content: center; gap: 0;
-    padding: 20px 0; flex-wrap: wrap; }
-  .flow-node { background: var(--bg); border: 2px solid var(--border); border-radius: 8px;
-    padding: 12px 16px; min-width: 120px; text-align: center; }
-  .flow-node.source { border-color: var(--accent); }
-  .flow-node.gate { border-color: var(--yellow); }
-  .flow-node.dest { border-color: var(--green); }
-  .flow-node .label { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
-  .flow-node .value { font-size: 14px; font-weight: 600; }
-  .flow-arrow { color: var(--muted); font-size: 24px; padding: 0 8px; }
-  .flow-decision { font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 4px; margin-top: 4px; }
-  .conn-row { cursor: pointer; transition: background 0.15s; }
-  .conn-row:hover { background: rgba(47, 129, 247, 0.08); }
-  .conn-row.selected { background: rgba(47, 129, 247, 0.15); }
-  .conn-table { max-height: 400px; overflow-y: auto; }
-  .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    background: var(--green); margin-right: 6px; animation: pulse 2s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-  .toggle input { width: 16px; height: 16px; }
+  *,*::before,*::after { margin:0; padding:0; box-sizing:border-box; border:0 solid; }
+  :host,html { line-height:1.5; font-family:ui-sans-serif,system-ui,-apple-system,sans-serif; font-feature-settings:normal; -webkit-tap-highlight-color:transparent; }
+  body { background:#fff; color:#171717; line-height:inherit; }
+  a { color:inherit; text-decoration:inherit; }
+  button { cursor:pointer; font-family:inherit; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; }
+
+  /* Layout */
+  .wrap { max-width:1024px; margin:0 auto; padding:0 24px; }
+  .nav { border-bottom:1px solid #e5e5e5; padding:12px 0; }
+  .nav-inner { display:flex; align-items:center; gap:12px; max-width:1024px; margin:0 auto; padding:0 24px; }
+  .nav-brand { font-size:16px; font-weight:600; letter-spacing:-0.025em; }
+  .nav-badge { background:#171717; color:#fff; padding:2px 8px; border-radius:9999px; font-size:11px; font-weight:500; }
+  .nav-right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+
+  .tabs { display:flex; gap:0; border-bottom:1px solid #e5e5e5; }
+  .tab { padding:10px 16px; cursor:pointer; color:#737373; font-size:14px; border-bottom:2px solid transparent; }
+  .tab:hover { color:#404040; }
+  .tab.active { color:#171717; border-bottom-color:#171717; font-weight:500; }
+
+  .section { padding:24px; }
+  .hidden { display:none !important; }
+
+  /* Cards */
+  .card { border:1px solid #e5e5e5; border-radius:12px; padding:20px; margin-bottom:20px; background:#fff; }
+  .card-title { font-size:13px; font-weight:600; color:#737373; text-transform:uppercase; letter-spacing:0.025em; margin-bottom:16px; }
+
+  /* Stats */
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:16px; }
+  .stat { text-align:center; padding:16px; }
+  .stat-num { font-size:32px; font-weight:600; letter-spacing:-0.025em; }
+  .stat-lbl { font-size:12px; color:#737373; margin-top:4px; }
+  .stat.allow .stat-num { color:#16a34a; }
+  .stat.deny .stat-num { color:#dc2626; }
+  .stat.esc .stat-num { color:#ca8a04; }
+
+  /* Table */
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; padding:8px 12px; font-size:11px; font-weight:600; color:#737373; text-transform:uppercase; border-bottom:1px solid #e5e5e5; }
+  td { padding:8px 12px; font-size:13px; border-bottom:1px solid #f5f5f5; }
+  tr:hover { background:#fafafa; }
+
+  /* Badges */
+  .badge { padding:2px 8px; border-radius:9999px; font-size:11px; font-weight:500; }
+  .badge-allow { background:#dcfce7; color:#16a34a; }
+  .badge-deny { background:#fee2e2; color:#dc2626; }
+  .badge-esc { background:#fef9c3; color:#ca8a04; }
+
+  /* Flow viz */
+  .flow { display:flex; align-items:center; justify-content:center; gap:0; padding:24px 0; flex-wrap:wrap; }
+  .flow-node { border:1px solid #e5e5e5; border-radius:12px; padding:16px 24px; min-width:140px; text-align:center; background:#fff; }
+  .flow-node.src { border-color:#d1d5db; }
+  .flow-node.gate { border-color:#9ca3af; }
+  .flow-node.dst { border-color:#d1d5db; }
+  .flow-lbl { font-size:10px; color:#737373; text-transform:uppercase; margin-bottom:6px; }
+  .flow-val { font-size:15px; font-weight:500; }
+  .flow-arrow { color:#a3a3a3; font-size:24px; padding:0 12px; }
+  .flow-dec { font-size:11px; font-weight:500; padding:3px 8px; border-radius:9999px; margin-top:8px; display:inline-block; }
+
+  /* Forms */
+  input,select,textarea { font-family:inherit; font-size:14px; padding:8px 12px; border:1px solid #d4d4d4; border-radius:8px; background:#fff; color:#171717; outline:none; }
+  input:focus,select:focus,textarea:focus { border-color:#171717; }
+  textarea.editor { width:100%; height:400px; font-family:ui-monospace,monospace; font-size:13px; resize:vertical; border-radius:8px; }
+  .btn { background:#171717; color:#fff; border:none; padding:8px 20px; border-radius:9999px; font-size:14px; font-weight:500; }
+  .btn:hover { background:#404040; }
+  .btn.sec { background:#fff; color:#171717; border:1px solid #d4d4d4; }
+  .btn.sec:hover { background:#f5f5f5; }
+  .actions { display:flex; gap:8px; margin-top:12px; }
+  .filters { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center; }
+
+  /* Login */
+  .login-card { max-width:400px; margin:80px auto; }
+  .login-card input { width:100%; margin-bottom:12px; }
+
+  /* Misc */
+  pre { background:#f5f5f5; padding:16px; border-radius:8px; overflow-x:auto; font-size:12px; line-height:1.6; }
+  .live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#16a34a; margin-right:6px; animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .toggle { display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; }
+  .toggle input { width:14px; height:14px; }
+  .conn-scroll { max-height:400px; overflow-y:auto; }
+  .conn-row { cursor:pointer; }
+  .conn-row.sel { background:#f0f0f0; }
+  .timestamp { text-align:center; color:#737373; font-size:12px; margin-top:8px; }
 </style>
 </head>
 <body>
-<div class="header">
-  <h1>Raucle Gateway</h1>
-  <span class="badge">Admin</span>
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">Raucle</span>
+    <span class="nav-badge">Gateway</span>
+    <div class="nav-right" id="navRight"></div>
+  </div>
+</nav>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('dashboard',this)">Dashboard</div>
+  <div class="tab" onclick="showTab('connections',this)">Connections</div>
+  <div class="tab" onclick="showTab('policies',this)">Policies</div>
+  <div class="tab" onclick="showTab('receipts',this)">Receipts</div>
+  <div class="tab" onclick="showTab('siem',this)">SIEM</div>
+  <div class="tab" onclick="showTab('users',this)">Users</div>
+  <div class="tab" onclick="showTab('config',this)">Config</div>
 </div>
-<div id="login" class="content login">
-  <div class="card">
-    <h2>Authentication</h2>
-    <input class="input" id="apiKey" type="password" placeholder="Admin API Key" style="width:100%">
-    <div style="margin-top:12px"><button class="btn" onclick="login()">Login</button></div>
+
+<!-- LOGIN -->
+<div id="login" class="wrap">
+  <div class="card login-card">
+    <div class="card-title">Authentication</div>
+    <input type="password" id="apiKey" placeholder="API Key" onkeydown="if(event.key==='Enter')login()">
+    <button class="btn" onclick="login()" style="width:100%">Login</button>
   </div>
 </div>
+
+<!-- MAIN -->
 <div id="main" class="hidden">
-  <div class="tabs">
-    <div class="tab active" onclick="showTab('dashboard',this)">Dashboard</div>
-    <div class="tab" onclick="showTab('connections',this)">Connections</div>
-    <div class="tab" onclick="showTab('policies',this)">Policies</div>
-    <div class="tab" onclick="showTab('receipts',this)">Receipts</div>
-    <div class="tab" onclick="showTab('siem',this)">SIEM</div>
-    <div class="tab" onclick="showTab('users',this)">Users</div>
-    <div class="tab" onclick="showTab('config',this)">Config</div>
+
+  <!-- DASHBOARD -->
+  <div id="tab-dashboard" class="wrap section">
+    <div class="card"><div class="card-title">Gate Decisions</div>
+      <div class="stats" id="statsGrid"></div>
+    </div>
+    <div class="card"><div class="card-title">By Tool</div>
+      <table id="toolTable"><thead><tr><th>Tool</th><th>Allow</th><th>Deny</th><th>Escalate</th></tr></thead><tbody></tbody></table>
+    </div>
   </div>
-  <div class="content">
-    <!-- DASHBOARD -->
-    <div id="tab-dashboard">
-      <div class="card"><h2>Gate Decisions</h2>
-        <div class="stats-grid" id="statsGrid"></div>
-      </div>
-      <div class="card"><h2>By Tool</h2>
-        <table id="toolTable"><thead><tr><th>Tool</th><th>Allow</th><th>Deny</th><th>Escalate</th></tr></thead><tbody></tbody></table>
-      </div>
-    </div>
 
-    <!-- CONNECTIONS -->
-    <div id="tab-connections" class="hidden">
-      <div class="card">
-        <h2><span class="live-dot"></span>Live Connection Flow</h2>
-        <div class="flow-viz" id="flowViz">
-          <div class="flow-node source">
-            <div class="label">Source</div>
-            <div class="value" id="flowSource">--</div>
-          </div>
-          <div class="flow-arrow">&#8594;</div>
-          <div class="flow-node gate">
-            <div class="label">Policy / Gate</div>
-            <div class="value" id="flowPolicy">--</div>
-            <div class="flow-decision" id="flowDecision">--</div>
-          </div>
-          <div class="flow-arrow">&#8594;</div>
-          <div class="flow-node dest">
-            <div class="label">Destination</div>
-            <div class="value" id="flowDest">--</div>
-          </div>
-        </div>
-        <div style="text-align:center;color:var(--muted);font-size:12px;margin-top:8px" id="flowTimestamp">No connections yet</div>
+  <!-- CONNECTIONS -->
+  <div id="tab-connections" class="wrap section hidden">
+    <div class="card">
+      <div class="card-title"><span class="live-dot"></span>Live Connection Flow</div>
+      <div class="flow" id="flowViz">
+        <div class="flow-node src"><div class="flow-lbl">Source</div><div class="flow-val" id="flowSrc">--</div></div>
+        <div class="flow-arrow">&#8594;</div>
+        <div class="flow-node gate"><div class="flow-lbl">Policy</div><div class="flow-val" id="flowPolicy">--</div><div class="flow-dec" id="flowDec">--</div></div>
+        <div class="flow-arrow">&#8594;</div>
+        <div class="flow-node dst"><div class="flow-lbl">Destination</div><div class="flow-val" id="flowDst">--</div></div>
       </div>
-      <div class="card">
-        <h2>Connection Log</h2>
-        <div class="filter-bar">
-          <select id="filterDecision">
-            <option value="">All Decisions</option>
-            <option value="allow">Allow</option>
-            <option value="deny">Deny</option>
-            <option value="escalate">Escalate</option>
-          </select>
-          <input class="input" id="filterTool" placeholder="Filter by tool...">
-          <input class="input" id="filterSource" placeholder="Filter by source...">
-          <input class="input" id="filterDest" placeholder="Filter by destination...">
-          <button class="btn secondary" onclick="clearFilters()">Clear</button>
-          <label class="toggle"><input type="checkbox" id="liveMode" checked onchange="loadConnections()"> Live update</label>
-        </div>
-        <div class="conn-table">
-          <table id="connTable">
-            <thead><tr><th>Time</th><th>Source</th><th>Tool</th><th>Policy</th><th>Decision</th><th>Destination</th><th>Reason</th><th>Latency</th></tr></thead>
-            <tbody id="connBody"></tbody>
-          </table>
-        </div>
+      <div class="timestamp" id="flowTime">No connections yet</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Connection Log</div>
+      <div class="filters">
+        <select id="fDec"><option value="">All</option><option value="allow">Allow</option><option value="deny">Deny</option><option value="escalate">Escalate</option></select>
+        <input id="fTool" placeholder="Tool" style="min-width:100px">
+        <input id="fSrc" placeholder="Source" style="min-width:100px">
+        <input id="fDst" placeholder="Destination" style="min-width:100px">
+        <button class="btn sec" onclick="clearFilters()">Clear</button>
+        <label class="toggle"><input type="checkbox" id="liveMode" checked onchange="loadConns()"> Live</label>
+      </div>
+      <div class="conn-scroll">
+        <table><thead><tr><th>Time</th><th>Source</th><th>Tool</th><th>Policy</th><th>Decision</th><th>Destination</th><th>Reason</th><th>Latency</th></tr></thead>
+        <tbody id="connBody"></tbody></table>
       </div>
     </div>
+  </div>
 
-    <!-- POLICIES -->
-    <div id="tab-policies" class="hidden">
-      <div class="card"><h2>Policy File</h2>
-        <textarea class="editor" id="policyEditor"></textarea>
-        <div class="actions">
-          <button class="btn" onclick="validatePolicy()">Validate</button>
-          <button class="btn" onclick="savePolicy()">Save & Deploy</button>
-          <button class="btn secondary" onclick="reloadPolicy()">Reload</button>
-        </div>
+  <!-- POLICIES -->
+  <div id="tab-policies" class="wrap section hidden">
+    <div class="card"><div class="card-title">Policy File</div>
+      <textarea class="editor" id="policyEditor"></textarea>
+      <div class="actions">
+        <button class="btn" onclick="validatePolicy()">Validate</button>
+        <button class="btn" onclick="savePolicy()">Save & Deploy</button>
+        <button class="btn sec" onclick="reloadPolicy()">Reload</button>
       </div>
     </div>
+  </div>
 
-    <!-- RECEIPTS -->
-    <div id="tab-receipts" class="hidden">
-      <div class="card"><h2>Recent Receipts</h2><pre id="receiptsView">Loading...</pre></div>
-    </div>
+  <!-- RECEIPTS -->
+  <div id="tab-receipts" class="wrap section hidden">
+    <div class="card"><div class="card-title">Recent Receipts</div><pre id="receiptsView">Loading...</pre></div>
+  </div>
 
-    <!-- SIEM -->
-    <div id="tab-siem" class="hidden">
-      <div class="card"><h2>SIEM Forwarding</h2>
-        <label class="toggle"><input type="checkbox" id="siemEnabled"> Enabled</label><br><br>
-        <input class="input" id="siemBackend" placeholder="splunk / elastic / sentinel" style="width:200px;margin-bottom:8px"><br>
-        <input class="input" id="siemUrl" placeholder="SIEM endpoint URL" style="width:400px;margin-bottom:8px"><br>
-        <input class="input" id="siemToken" type="password" placeholder="SIEM token" style="width:400px;margin-bottom:8px"><br>
-        <button class="btn" onclick="saveSIEM()">Save</button>
+  <!-- SIEM -->
+  <div id="tab-siem" class="wrap section hidden">
+    <div class="card"><div class="card-title">SIEM Forwarding</div>
+      <label class="toggle" style="margin-bottom:16px"><input type="checkbox" id="siemEnabled"> Enabled</label>
+      <div style="display:flex;flex-direction:column;gap:8px;max-width:400px">
+        <input id="siemBackend" placeholder="splunk / elastic / sentinel">
+        <input id="siemUrl" placeholder="SIEM endpoint URL">
+        <input type="password" id="siemToken" placeholder="SIEM token">
       </div>
+      <div class="actions"><button class="btn" onclick="saveSIEM()">Save</button></div>
     </div>
+  </div>
 
-    <!-- USERS -->
-    <div id="tab-users" class="hidden">
-      <div class="card"><h2>Add User</h2>
-        <input class="input" id="newKey" placeholder="API Key" style="width:300px;margin-bottom:8px"><br>
-        <input class="input" id="newRole" placeholder="admin / operator / auditor" style="width:200px;margin-bottom:8px"><br>
-        <input class="input" id="newName" placeholder="Name" style="width:200px;margin-bottom:8px"><br>
-        <button class="btn" onclick="addUser()">Add</button>
+  <!-- USERS -->
+  <div id="tab-users" class="wrap section hidden">
+    <div class="card"><div class="card-title">Add User</div>
+      <div style="display:flex;flex-direction:column;gap:8px;max-width:400px">
+        <input id="newKey" placeholder="API Key">
+        <input id="newRole" placeholder="admin / operator / auditor">
+        <input id="newName" placeholder="Name">
       </div>
-      <div class="card"><h2>Users</h2>
-        <table id="userTable"><thead><tr><th>Key</th><th>Role</th><th>Name</th></tr></thead><tbody></tbody></table>
-      </div>
+      <div class="actions"><button class="btn" onclick="addUser()">Add</button></div>
     </div>
+    <div class="card"><div class="card-title">Users</div>
+      <table id="userTable"><thead><tr><th>Key</th><th>Role</th><th>Name</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
 
-    <!-- CONFIG -->
-    <div id="tab-config" class="hidden">
-      <div class="card"><h2>Configuration</h2><pre id="configView"></pre></div>
-    </div>
+  <!-- CONFIG -->
+  <div id="tab-config" class="wrap section hidden">
+    <div class="card"><div class="card-title">Configuration</div><pre id="configView"></pre></div>
   </div>
 </div>
+
 <script>
-let key = '';
-let connPollId = null;
-
-function login() {
-  key = document.getElementById('apiKey').value;
-  fetch('/api/stats', {headers: {'Authorization': key}})
-    .then(r => { if (r.ok) { document.getElementById('login').classList.add('hidden');
-      document.getElementById('main').classList.remove('hidden'); loadAll(); }
-      else { alert('Invalid API key'); } });
+let key='';
+let pollId=null;
+function esc(s){return s?s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])):'--';}
+function api(p,o){return fetch(p,{...(o||{}),headers:{'Authorization':key,...((o||{}).headers||{})}});}
+function login(){
+  key=document.getElementById('apiKey').value;
+  api('/api/stats').then(r=>{if(r.ok){document.getElementById('login').classList.add('hidden');document.getElementById('main').classList.remove('hidden');loadAll();}else{alert('Invalid key');}});
 }
-
-function showTab(t, el) {
-  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-  document.querySelectorAll('[id^=tab-]').forEach(x => x.classList.add('hidden'));
+function showTab(t,el){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('[id^=tab-]').forEach(x=>x.classList.add('hidden'));
   el.classList.add('active');
-  document.getElementById('tab-' + t).classList.remove('hidden');
-  if (t === 'dashboard') loadStats();
-  if (t === 'connections') { loadConnections(); startConnPolling(); }
-  else { stopConnPolling(); }
-  if (t === 'policies') loadPolicy();
-  if (t === 'receipts') loadReceipts();
-  if (t === 'siem') loadSIEM();
-  if (t === 'users') loadUsers();
-  if (t === 'config') loadConfig();
+  document.getElementById('tab-'+t).classList.remove('hidden');
+  if(t==='dashboard')loadStats();
+  if(t==='connections'){loadConns();startPoll();}
+  else{stopPoll();}
+  if(t==='policies')loadPolicy();
+  if(t==='receipts')loadReceipts();
+  if(t==='siem')loadSIEM();
+  if(t==='users')loadUsers();
+  if(t==='config')loadConfig();
 }
-
-function api(path, opts) {
-  return fetch(path, {...(opts||{}), headers: {'Authorization': key, ...((opts||{}).headers||{})}});
-}
-
-function loadAll() { loadStats(); }
-
-function loadStats() {
+function loadAll(){loadStats();}
+function loadStats(){
   api('/api/stats').then(r=>r.json()).then(d=>{
-    document.getElementById('statsGrid').innerHTML =
-      `<div class="stat"><div class="value">${d.total_requests}</div><div class="label">Total</div></div>` +
-      `<div class="stat allow"><div class="value">${d.allowed}</div><div class="label">Allowed</div></div>` +
-      `<div class="stat deny"><div class="value">${d.denied}</div><div class="label">Denied</div></div>` +
-      `<div class="stat escalate"><div class="value">${d.escalated}</div><div class="label">Escalated</div></div>` +
-      `<div class="stat"><div class="value">${d.avg_latency_us || 0}</div><div class="label">Avg Latency (us)</div></div>`;
-    let tb = document.querySelector('#toolTable tbody'); tb.innerHTML='';
-    Object.entries(d.tools||{}).forEach(([t,s])=>tb.innerHTML+=`<tr><td>${t}</td><td>${s.allow||0}</td><td>${s.deny||0}</td><td>${s.escalate||0}</td></tr>`);
+    document.getElementById('statsGrid').innerHTML=
+      '<div class="stat"><div class="stat-num">'+d.total_requests+'</div><div class="stat-lbl">Total</div></div>'+
+      '<div class="stat allow"><div class="stat-num">'+d.allowed+'</div><div class="stat-lbl">Allowed</div></div>'+
+      '<div class="stat deny"><div class="stat-num">'+d.denied+'</div><div class="stat-lbl">Denied</div></div>'+
+      '<div class="stat esc"><div class="stat-num">'+d.escalated+'</div><div class="stat-lbl">Escalated</div></div>'+
+      '<div class="stat"><div class="stat-num">'+(d.avg_latency_us||0)+'</div><div class="stat-lbl">Avg us</div></div>';
+    let tb=document.querySelector('#toolTable tbody');tb.innerHTML='';
+    Object.entries(d.tools||{}).forEach(([t,s])=>tb.innerHTML+='<tr><td>'+esc(t)+'</td><td>'+(s.allow||0)+'</td><td>'+(s.deny||0)+'</td><td>'+(s.escalate||0)+'</td></tr>');
   });
 }
-
-// --- CONNECTIONS ---
-function esc(s) { return s ? s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : '--'; }
-
-function loadConnections() {
-  let params = new URLSearchParams({limit: 200});
-  let fd = document.getElementById('filterDecision').value;
-  let ft = document.getElementById('filterTool').value;
-  let fs = document.getElementById('filterSource').value;
-  let fde = document.getElementById('filterDest').value;
-  if (fd) params.set('decision', fd);
-  if (ft) params.set('tool', ft);
-  if (fs) params.set('source', fs);
-  if (fde) params.set('destination', fde);
-  api('/api/connections?' + params.toString()).then(r=>r.json()).then(d=>{
-    let tb = document.getElementById('connBody');
-    tb.innerHTML = '';
-    (d.connections||[]).forEach((c,i) => {
-      let badge = c.decision === 'allow' ? 'badge-allow' : c.decision === 'deny' ? 'badge-deny' : 'badge-escalate';
-      let time = c.timestamp ? c.timestamp.substring(11,19) : '--:--:--';
-      let policy = c.policy ? c.policy.split('/').pop() : '--';
-      tb.innerHTML += `<tr class="conn-row" onclick="selectConn(${i})" data-idx="${i}">
-        <td>${esc(time)}</td><td>${esc(c.source)}</td><td>${esc(c.tool)}</td>
-        <td>${esc(policy)}</td><td><span class="${badge}">${esc(c.decision)}</span></td>
-        <td>${esc(c.destination)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.reason)}</td>
-        <td>${c.latency_us||0}us</td></tr>`;
+function loadConns(){
+  let p=new URLSearchParams({limit:200});
+  let fd=document.getElementById('fDec').value,ft=document.getElementById('fTool').value,fs=document.getElementById('fSrc').value,fde=document.getElementById('fDst').value;
+  if(fd)p.set('decision',fd);if(ft)p.set('tool',ft);if(fs)p.set('source',fs);if(fde)p.set('destination',fde);
+  api('/api/connections?'+p.toString()).then(r=>r.json()).then(d=>{
+    let tb=document.getElementById('connBody');tb.innerHTML='';
+    (d.connections||[]).forEach((c,i)=>{
+      let b=c.decision==='allow'?'badge-allow':c.decision==='deny'?'badge-deny':'badge-esc';
+      let t=c.timestamp?c.timestamp.substring(11,19):'--:--:--';
+      let pol=c.policy?c.policy.split('/').pop():'--';
+      tb.innerHTML+='<tr class="conn-row" onclick="selConn('+i+')" data-idx="'+i+'"><td>'+esc(t)+'</td><td>'+esc(c.source)+'</td><td>'+esc(c.tool)+'</td><td>'+esc(pol)+'</td><td><span class="'+b+'">'+esc(c.decision)+'</span></td><td>'+esc(c.destination)+'</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">'+esc(c.reason)+'</td><td>'+(c.latency_us||0)+'us</td></tr>';
     });
-    // Auto-update flow viz with most recent connection
-    if (d.connections && d.connections.length > 0) {
-      updateFlowViz(d.connections[0]);
-    }
-    // Store for row selection
-    window._conns = d.connections || [];
+    if(d.connections&&d.connections.length>0)updateFlow(d.connections[0]);
+    window._conns=d.connections||[];
   }).catch(()=>{});
 }
-
-function selectConn(idx) {
-  document.querySelectorAll('.conn-row').forEach(r => r.classList.remove('selected'));
-  let row = document.querySelector(`.conn-row[data-idx="${idx}"]`);
-  if (row) row.classList.add('selected');
-  if (window._conns && window._conns[idx]) {
-    updateFlowViz(window._conns[idx]);
-  }
+function selConn(i){
+  document.querySelectorAll('.conn-row').forEach(r=>r.classList.remove('sel'));
+  let r=document.querySelector('.conn-row[data-idx="'+i+'"]');if(r)r.classList.add('sel');
+  if(window._conns&&window._conns[i])updateFlow(window._conns[i]);
 }
-
-function updateFlowViz(c) {
-  document.getElementById('flowSource').textContent = c.source || '--';
-  document.getElementById('flowDest').textContent = c.destination || '--';
-  let policy = c.policy ? c.policy.split('/').pop() : c.tool || '--';
-  document.getElementById('flowPolicy').textContent = policy;
-  let decEl = document.getElementById('flowDecision');
-  decEl.textContent = c.decision || '--';
-  decEl.className = 'flow-decision ' + (c.decision === 'allow' ? 'badge-allow' : c.decision === 'deny' ? 'badge-deny' : 'badge-escalate');
-  document.getElementById('flowTimestamp').textContent = c.timestamp || '';
+function updateFlow(c){
+  document.getElementById('flowSrc').textContent=esc(c.source);
+  document.getElementById('flowDst').textContent=esc(c.destination);
+  document.getElementById('flowPolicy').textContent=esc(c.policy?c.policy.split('/').pop():c.tool);
+  let d=document.getElementById('flowDec');d.textContent=esc(c.decision);
+  d.className='flow-dec '+(c.decision==='allow'?'badge-allow':c.decision==='deny'?'badge-deny':'badge-esc');
+  document.getElementById('flowTime').textContent=esc(c.timestamp);
 }
-
-function clearFilters() {
-  document.getElementById('filterDecision').value = '';
-  document.getElementById('filterTool').value = '';
-  document.getElementById('filterSource').value = '';
-  document.getElementById('filterDest').value = '';
-  loadConnections();
-}
-
-function startConnPolling() {
-  stopConnPolling();
-  let live = document.getElementById('liveMode');
-  connPollId = setInterval(() => {
-    if (live && live.checked && !document.getElementById('tab-connections').classList.contains('hidden')) {
-      loadConnections();
-    }
-  }, 3000);
-}
-
-function stopConnPolling() {
-  if (connPollId) { clearInterval(connPollId); connPollId = null; }
-}
-
-// --- POLICIES ---
-function loadPolicy() { api('/api/policies').then(r=>r.json()).then(d=>{document.getElementById('policyEditor').value=d.content;}); }
-function validatePolicy() {
-  api('/api/policies/validate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({content:document.getElementById('policyEditor').value})})
-    .then(r=>r.json()).then(d=>alert(d.valid?'Valid':'Invalid: '+d.error));
-}
-function savePolicy() {
-  api('/api/policies',{method:'PUT',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({content:document.getElementById('policyEditor').value})})
-    .then(r=>r.json()).then(d=>alert('Saved: '+JSON.stringify(d)));
-}
-function reloadPolicy() { api('/api/policies/reload',{method:'POST'}).then(r=>r.json()).then(d=>alert('Reloaded: '+JSON.stringify(d))); }
-
-// --- RECEIPTS ---
-function loadReceipts() { api('/api/receipts?limit=20').then(r=>r.json()).then(d=>{
-  document.getElementById('receiptsView').textContent=JSON.stringify(d.receipts,null,2);}); }
-
-// --- SIEM ---
-function loadSIEM() { api('/api/siem').then(r=>r.json()).then(d=>{
-  document.getElementById('siemEnabled').checked=d.enabled;
-  document.getElementById('siemBackend').value=d.backend||'';
-  document.getElementById('siemUrl').value=d.url||'';}); }
-function saveSIEM() {
-  api('/api/siem',{method:'PUT',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({enabled:document.getElementById('siemEnabled').checked,
-      backend:document.getElementById('siemBackend').value,
-      url:document.getElementById('siemUrl').value,
-      token:document.getElementById('siemToken').value})}).then(r=>r.json()).then(d=>alert('Saved'));
-}
-
-// --- USERS ---
-function loadUsers() { api('/api/users').then(r=>r.json()).then(d=>{
-  let tb=document.querySelector('#userTable tbody');tb.innerHTML='';
-  d.users.forEach(u=>tb.innerHTML+=`<tr><td>${u.api_key}</td><td>${u.role}</td><td>${u.name||''}</td></tr>`);}); }
-function addUser() {
-  api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({api_key:document.getElementById('newKey').value,
-      role:document.getElementById('newRole').value,
-      name:document.getElementById('newName').value})}).then(r=>r.json()).then(d=>{alert('Added');loadUsers();}); }
-
-// --- CONFIG ---
-function loadConfig() { api('/api/config').then(r=>r.json()).then(d=>{
-  document.getElementById('configView').textContent=JSON.stringify(d,null,2);}); }
-
-setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden') && !document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);
+function clearFilters(){document.getElementById('fDec').value='';document.getElementById('fTool').value='';document.getElementById('fSrc').value='';document.getElementById('fDst').value='';loadConns();}
+function startPoll(){stopPoll();let l=document.getElementById('liveMode');pollId=setInterval(()=>{if(l&&l.checked&&!document.getElementById('tab-connections').classList.contains('hidden'))loadConns();},3000);}
+function stopPoll(){if(pollId){clearInterval(pollId);pollId=null;}}
+function loadPolicy(){api('/api/policies').then(r=>r.json()).then(d=>{document.getElementById('policyEditor').value=d.content;});}
+function validatePolicy(){api('/api/policies/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:document.getElementById('policyEditor').value})}).then(r=>r.json()).then(d=>alert(d.valid?'Valid':'Invalid: '+d.error));}
+function savePolicy(){api('/api/policies',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:document.getElementById('policyEditor').value})}).then(r=>r.json()).then(d=>alert('Saved: '+JSON.stringify(d)));}
+function reloadPolicy(){api('/api/policies/reload',{method:'POST'}).then(r=>r.json()).then(d=>alert('Reloaded: '+JSON.stringify(d)));}
+function loadReceipts(){api('/api/receipts?limit=20').then(r=>r.json()).then(d=>{document.getElementById('receiptsView').textContent=JSON.stringify(d.receipts,null,2);});}
+function loadSIEM(){api('/api/siem').then(r=>r.json()).then(d=>{document.getElementById('siemEnabled').checked=d.enabled;document.getElementById('siemBackend').value=d.backend||'';document.getElementById('siemUrl').value=d.url||'';});}
+function saveSIEM(){api('/api/siem',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('siemEnabled').checked,backend:document.getElementById('siemBackend').value,url:document.getElementById('siemUrl').value,token:document.getElementById('siemToken').value})}).then(r=>r.json()).then(d=>alert('Saved'));}
+function loadUsers(){api('/api/users').then(r=>r.json()).then(d=>{let tb=document.querySelector('#userTable tbody');tb.innerHTML='';d.users.forEach(u=>tb.innerHTML+='<tr><td>'+esc(u.api_key)+'</td><td>'+esc(u.role)+'</td><td>'+esc(u.name)+'</td></tr>');});}
+function addUser(){api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('newKey').value,role:document.getElementById('newRole').value,name:document.getElementById('newName').value})}).then(r=>r.json()).then(d=>{alert('Added');loadUsers();});}
+function loadConfig(){api('/api/config').then(r=>r.json()).then(d=>{document.getElementById('configView').textContent=JSON.stringify(d,null,2);});}
+setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden')&&!document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);
 </script>
 </body>
 </html>"""

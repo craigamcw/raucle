@@ -128,8 +128,11 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         version="0.1.0",
     )
 
-    def check_auth(authorization: str | None = Header(None)) -> GatewayUser:
-        """Extract and validate the API key from the Authorization header."""
+    def check_auth(
+        authorization: str | None = Header(None),
+        x_totp: str | None = Header(None, alias="X-TOTP"),
+    ) -> GatewayUser:
+        """Extract and validate the API key and optional TOTP code."""
         if authorization is None:
             raise HTTPException(status_code=401, detail="Missing Authorization header")
         # Accept "Bearer <key>" or just "<key>"
@@ -139,6 +142,18 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         user = users.get_user(key)
         if user is None:
             raise HTTPException(status_code=403, detail="Invalid API key")
+        # MFA check
+        if user.requires_mfa():
+            if not x_totp:
+                raise HTTPException(
+                    status_code=401,
+                    detail="MFA required: provide X-TOTP header with 6-digit code",
+                )
+            if not users.verify_totp(user, x_totp):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Invalid TOTP code",
+                )
         return user
 
     def check_access(user: GatewayUser, resource: str) -> None:
@@ -346,6 +361,51 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             return {"status": "ok"}
         raise HTTPException(404, "user not found")
 
+    # --- MFA Management ---
+    @app.post("/api/users/{api_key}/mfa/setup")
+    def setup_mfa(api_key: str, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Generate a TOTP secret and provisioning URI for a user.
+
+        Returns the secret and otpauth:// URI. The user must scan the
+        QR code with their authenticator app and then call /mfa/verify
+        with the first 6-digit code to confirm MFA setup.
+        """
+        user = check_auth(authorization)
+        check_access(user, "users")
+        result = users.setup_mfa(api_key)
+        if result is None:
+            raise HTTPException(404, "user not found or pyotp not installed")
+        return {
+            "status": "ok",
+            "secret": result["secret"],
+            "uri": result["uri"],
+            "qr_instructions": "Scan this URI with Google Authenticator, Authy, or 1Password. Then call /mfa/verify with the 6-digit code.",
+        }
+
+    @app.post("/api/users/{api_key}/mfa/verify")
+    def verify_mfa_setup(
+        api_key: str,
+        code: str = "",
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        """Verify the first TOTP code and enable MFA for the user."""
+        user = check_auth(authorization)
+        check_access(user, "users")
+        if not code:
+            raise HTTPException(400, "code parameter is required")
+        if users.verify_mfa(api_key, code):
+            return {"status": "ok", "mfa_enabled": True}
+        raise HTTPException(400, "Invalid TOTP code")
+
+    @app.post("/api/users/{api_key}/mfa/disable")
+    def disable_mfa(api_key: str, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Disable MFA for a user. Requires admin role."""
+        user = check_auth(authorization)
+        check_access(user, "users")
+        if users.disable_mfa(api_key):
+            return {"status": "ok", "mfa_enabled": False}
+        raise HTTPException(404, "user not found")
+
     # --- Config ---
     @app.get("/api/config")
     def get_config(authorization: str | None = Header(None)) -> dict[str, Any]:
@@ -483,7 +543,11 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
   <div class="card">
     <div class="card-title">Sign In</div>
     <input class="input" id="apiKey" type="password" placeholder="API Key" onkeydown="if(event.key==='Enter')login()">
-    <button class="btn" style="width:100%" onclick="login()">Sign In</button>
+    <div id="totpRow" class="hidden" style="margin-top:12px">
+      <input class="input" id="totpInput" placeholder="6-digit TOTP code" maxlength="6" style="width:100%" onkeydown="if(event.key==='Enter')loginWithTotp()">
+      <button class="btn" style="width:100%;margin-top:8px" onclick="loginWithTotp()">Verify & Sign In</button>
+    </div>
+    <button class="btn" style="width:100%;margin-top:12px" onclick="login()">Sign In</button>
   </div>
 </div>
 
@@ -577,7 +641,21 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
         <div style="display:flex;flex-direction:column;gap:8px;max-width:400px">
           <input class="input" id="newKey" placeholder="API Key"><input class="input" id="newRole" placeholder="admin / operator / auditor"><input class="input" id="newName" placeholder="Name">
         </div><div class="actions"><button class="btn" onclick="addUser()">Add</button></div></div>
-      <div class="card"><div class="card-title">Users</div><table><thead><tr><th>Key</th><th>Role</th><th>Name</th></tr></thead><tbody id="userTableBody"></tbody></table></div>
+      <div class="card"><div class="card-title">Users</div>
+        <table><thead><tr><th>Key</th><th>Role</th><th>Name</th><th>MFA</th><th>Actions</th></tr></thead>
+        <tbody id="userTableBody"></tbody></table>
+      </div>
+      <div class="card hidden" id="mfaSetupCard">
+        <div class="card-title">MFA Setup</div>
+        <p style="font-size:13px;color:#525252;margin-bottom:12px">Scan the QR code or enter the secret manually in your authenticator app (Google Authenticator, Authy, 1Password). Then enter the 6-digit code below to confirm.</p>
+        <div id="mfaQrCode" style="margin-bottom:12px"></div>
+        <div style="font-family:ui-monospace,monospace;font-size:13px;padding:12px;background:#fafafa;border-radius:8px;border:1px solid #e5e5e5;margin-bottom:12px;word-break:break-all" id="mfaSecret"></div>
+        <div style="font-size:12px;color:#737373;margin-bottom:8px" id="mfaUri"></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input class="input" id="mfaCodeInput" placeholder="6-digit code" style="width:140px" maxlength="6" onkeydown="if(event.key==='Enter')confirmMfa()">
+          <button class="btn" onclick="confirmMfa()">Confirm</button>
+        </div>
+      </div>
     </div>
     <div id="tab-config" class="hidden"><div class="card"><div class="card-title">Configuration</div><pre id="configView"></pre></div></div>
 
@@ -585,11 +663,36 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
-let key='', connPollId=null, allConns=[], dirFilter='all', selectedSource=null, selectedDest=null;
+let key='', totpCode='', connPollId=null, allConns=[], dirFilter='all', selectedSource=null, selectedDest=null;
 
 function login() {
   key = document.getElementById('apiKey').value;
-  fetch('/api/stats', {headers:{Authorization:key}}).then(r=>{if(r.ok){document.getElementById('login').classList.add('hidden');document.getElementById('main').classList.remove('hidden');loadAll();}else{alert('Invalid API key');}});
+  // Try without TOTP first
+  fetch('/api/stats', {headers: {'Authorization': key}})
+    .then(r => {
+      if (r.ok) { showMain(); }
+      else if (r.status === 401 && r.headers.get('content-type','').includes('json')) {
+        r.json().then(d => {
+          if (d.detail && d.detail.includes('MFA required')) {
+            // Show TOTP input
+            document.getElementById('totpRow').classList.remove('hidden');
+            document.getElementById('totpInput').focus();
+            alert('This account has MFA enabled. Enter the 6-digit code from your authenticator app.');
+          } else { alert('Invalid API key'); }
+        });
+      } else { alert('Invalid API key'); }
+    });
+}
+function loginWithTotp() {
+  totpCode = document.getElementById('totpInput').value;
+  if (!totpCode || totpCode.length !== 6) { alert('Enter the 6-digit TOTP code'); return; }
+  fetch('/api/stats', {headers: {'Authorization': key, 'X-TOTP': totpCode}})
+    .then(r => { if (r.ok) { showMain(); } else { alert('Invalid TOTP code'); } });
+}
+function showMain() {
+  document.getElementById('login').classList.add('hidden');
+  document.getElementById('main').classList.remove('hidden');
+  loadAll();
 }
 function showTab(t,el) {
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -598,7 +701,7 @@ function showTab(t,el) {
   if(t==='dashboard')loadStats(); if(t==='connections'){loadConnections();startConnPolling();} else stopConnPolling();
   if(t==='policies')loadPolicy(); if(t==='receipts')loadReceipts(); if(t==='siem')loadSIEM(); if(t==='users')loadUsers(); if(t==='config')loadConfig();
 }
-function api(p,o){return fetch(p,{...(o||{}),headers:{Authorization:key,...((o||{}).headers||{})}});}
+function api(p,o){const h={'Authorization':key,...((o||{}).headers||{})};if(totpCode)h['X-TOTP']=totpCode;return fetch(p,{...(o||{}),headers:h});}
 function loadAll(){loadStats();}
 function loadStats(){api('/api/stats').then(r=>r.json()).then(d=>{
   document.getElementById('statsGrid').innerHTML=`<div class="stat"><div class="stat-value">${d.total_requests||0}</div><div class="stat-label">Total</div></div><div class="stat"><div class="stat-value">${d.allowed||0}</div><div class="stat-label">Allowed</div></div><div class="stat"><div class="stat-value">${d.denied||0}</div><div class="stat-label">Denied</div></div><div class="stat"><div class="stat-value">${d.escalated||0}</div><div class="stat-label">Escalated</div></div><div class="stat"><div class="stat-value">${d.avg_latency_us||0}</div><div class="stat-label">Avg us</div></div>`;
@@ -764,8 +867,37 @@ function reloadPolicy(){api('/api/policies/reload',{method:'POST'}).then(r=>r.js
 function loadReceipts(){api('/api/receipts?limit=20').then(r=>r.json()).then(d=>{document.getElementById('receiptsView').textContent=JSON.stringify(d.receipts,null,2);});}
 function loadSIEM(){api('/api/siem').then(r=>r.json()).then(d=>{document.getElementById('siemEnabled').checked=d.enabled;document.getElementById('siemBackend').value=d.backend||'';document.getElementById('siemUrl').value=d.url||'';});}
 function saveSIEM(){api('/api/siem',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('siemEnabled').checked,backend:document.getElementById('siemBackend').value,url:document.getElementById('siemUrl').value,token:document.getElementById('siemToken').value})}).then(r=>r.json()).then(d=>alert('Saved'));}
-function loadUsers(){api('/api/users').then(r=>r.json()).then(d=>{let tb=document.getElementById('userTableBody');tb.innerHTML='';d.users.forEach(u=>tb.innerHTML+=`<tr><td>${esc(u.api_key)}</td><td>${esc(u.role)}</td><td>${esc(u.name)}</td></tr>`);});}
+function loadUsers(){api('/api/users').then(r=>r.json()).then(d=>{let tb=document.getElementById('userTableBody');tb.innerHTML='';d.users.forEach(u=>{tb.innerHTML+=`<tr><td>${esc(u.api_key)}</td><td>${esc(u.role)}</td><td>${esc(u.name||'')}</td><td>${u.mfa_enabled?'<span style="color:#22c55e;font-size:12px">Enabled</span>':'<span style="color:#a3a3a3;font-size:12px">Off</span>'}</td><td><button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="setupMfa('${esc(u.api_key)}')">Setup MFA</button>${u.mfa_enabled?` <button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="disableMfa('${esc(u.api_key)}')">Disable</button>`:''}</td></tr>`;});});}
 function addUser(){api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('newKey').value,role:document.getElementById('newRole').value,name:document.getElementById('newName').value})}).then(r=>r.json()).then(d=>{alert('Added');loadUsers();});}
+let mfaSetupKey='';
+function setupMfa(key){
+  mfaSetupKey=key;
+  api(`/api/users/${encodeURIComponent(key)}/mfa/setup`,{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.status==='ok'){
+      document.getElementById('mfaSetupCard').classList.remove('hidden');
+      document.getElementById('mfaSecret').textContent=d.secret;
+      document.getElementById('mfaUri').textContent=d.uri;
+      // Generate QR code using Google Charts API fallback to text display
+      const qrUrl=`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(d.uri)}`;
+      document.getElementById('mfaQrCode').innerHTML=`<img src="${qrUrl}" width="200" height="200" style="border-radius:8px;border:1px solid #e5e5e5" alt="QR Code for TOTP setup" />`;
+      document.getElementById('mfaCodeInput').value='';
+      document.getElementById('mfaCodeInput').focus();
+    } else { alert('MFA setup failed: '+(d.detail||'unknown')); }
+  });
+}
+function confirmMfa(){
+  const code=document.getElementById('mfaCodeInput').value;
+  if(!code||code.length!==6){alert('Enter the 6-digit code from your authenticator app');return;}
+  api(`/api/users/${encodeURIComponent(mfaSetupKey)}/mfa/verify?code=${code}`,{method:'POST'}).then(r=>{if(!r.ok){return r.json().then(d=>{throw new Error(d.detail||'Invalid code');});}return r.json();}).then(d=>{
+    alert('MFA enabled successfully! You will need a TOTP code for future logins.');
+    document.getElementById('mfaSetupCard').classList.add('hidden');
+    loadUsers();
+  }).catch(e=>alert('MFA verification failed: '+e.message));
+}
+function disableMfa(key){
+  if(!confirm('Disable MFA for this user?'))return;
+  api(`/api/users/${encodeURIComponent(key)}/mfa/disable`,{method:'POST'}).then(r=>r.json()).then(d=>{alert('MFA disabled');loadUsers();});
+}
 function loadConfig(){api('/api/config').then(r=>r.json()).then(d=>{document.getElementById('configView').textContent=JSON.stringify(d,null,2);});}
 
 setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden')&&!document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);

@@ -271,15 +271,22 @@ class GatewayUser:
     name: str = ""
     created_at: float = field(default_factory=lambda: time.time())
     expires_at: float | None = None  # None = never expires
+    # TOTP MFA fields
+    totp_secret: str = ""  # base32 secret, empty = MFA not set up
+    mfa_enabled: bool = False  # True after user verifies first TOTP code
 
     def is_expired(self) -> bool:
         if self.expires_at is None:
             return False
         return time.time() > self.expires_at
 
+    def requires_mfa(self) -> bool:
+        """True if this user must provide a TOTP code to authenticate."""
+        return self.mfa_enabled and bool(self.totp_secret)
+
 
 class UserManager:
-    """Simple API-key-based user management for the admin panel.
+    """API-key-based user management with optional TOTP MFA.
 
     Roles:
     - admin: full access (policies, users, config, stats, receipts)
@@ -288,6 +295,13 @@ class UserManager:
 
     Keys can have an optional expiry timestamp (Unix epoch seconds).
     Expired keys are automatically rejected on authentication.
+
+    MFA:
+    - Call setup_mfa() to generate a TOTP secret and provisioning URI
+    - User scans the QR code with their authenticator app
+    - Call verify_mfa() with the first 6-digit code to confirm setup
+    - After that, every API call must include X-TOTP header with a valid code
+    - MFA can be disabled by an admin via disable_mfa()
     """
 
     def __init__(self) -> None:
@@ -313,6 +327,70 @@ class UserManager:
                     return None
                 return user
         return None
+
+    def setup_mfa(self, api_key: str) -> dict[str, str] | None:
+        """Generate a TOTP secret and provisioning URI for a user.
+
+        Returns dict with 'secret' and 'uri' keys, or None if user not found.
+        The secret is stored on the user but MFA is not enabled until
+        verify_mfa() is called with a valid code.
+        """
+        user = self._users.get(api_key)
+        if user is None:
+            return None
+        try:
+            import pyotp
+        except ImportError:
+            return None
+        secret = pyotp.random_base32()
+        user.totp_secret = secret
+        user.mfa_enabled = False  # not enabled until verified
+        totp = pyotp.TOTP(secret)
+        issuer = "Raucle Gateway"
+        label = user.name or api_key[:8]
+        uri = totp.provisioning_uri(name=label, issuer_name=issuer)
+        return {"secret": secret, "uri": uri}
+
+    def verify_mfa(self, api_key: str, code: str) -> bool:
+        """Verify a TOTP code and enable MFA for the user.
+
+        Call after setup_mfa() once the user has scanned the QR code.
+        If the code is valid, MFA is enabled for future authentication.
+        """
+        user = self._users.get(api_key)
+        if user is None or not user.totp_secret:
+            return False
+        try:
+            import pyotp
+
+            totp = pyotp.TOTP(user.totp_secret)
+            if totp.verify(code, valid_window=1):
+                user.mfa_enabled = True
+                return True
+        except Exception:
+            pass
+        return False
+
+    def verify_totp(self, user: GatewayUser, code: str) -> bool:
+        """Verify a TOTP code for an already-enabled user. Does not enable."""
+        if not user.totp_secret:
+            return False
+        try:
+            import pyotp
+
+            totp = pyotp.TOTP(user.totp_secret)
+            return totp.verify(code, valid_window=1)
+        except Exception:
+            return False
+
+    def disable_mfa(self, api_key: str) -> bool:
+        """Disable MFA for a user. Returns True if successful."""
+        user = self._users.get(api_key)
+        if user is None:
+            return False
+        user.totp_secret = ""
+        user.mfa_enabled = False
+        return True
 
     def list_users(self) -> list[GatewayUser]:
         return list(self._users.values())

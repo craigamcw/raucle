@@ -17,7 +17,7 @@ COPY pyproject.toml README.md ./
 COPY raucle/ raucle/
 
 # Install raucle with gateway extras
-RUN pip install --no-cache-dir -e ".[dev,compliance,rules]"
+RUN pip install --no-cache-dir -e ".[dev,compliance,rules,server]"
 
 # Create data directories and non-root user
 RUN mkdir -p /data /etc/raucle && \

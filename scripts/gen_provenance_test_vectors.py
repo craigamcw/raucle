@@ -489,9 +489,76 @@ def _invalid_receipt_vectors() -> list[dict]:
     return out
 
 
+def _identity_resolution_policy_vectors() -> list[dict]:
+    """Synthetic identity-resolution scenarios for provenance assurance.
+
+    These vectors model identity-assurance policy independently from
+    cryptographic receipt validity. The source-control author format used here
+    is synthetic and specific to these test vectors; it is not a Raucle
+    provenance specification requirement.
+    """
+    return [
+        {
+            "name": "principal_resolution_authoritative",
+            "description": (
+                "Authenticated human principal is resolved from the authoritative "
+                "source-control platform API. The asserted artifact author and "
+                "authenticated pusher remain bound to the same stable platform "
+                "principal."
+            ),
+            "expected_identity_result": "PASS",
+            "human_principal_id": "99887766",
+            "human_principal_login": "alex.j.smith",
+            "identity_issuer": "SOURCE_CONTROL_PLATFORM",
+            "identity_resolution_method": "platform_api",
+            "asserted_artifact_author": ("99887766+alex.j.smith@platform.noreply.example"),
+            "pusher_principal_id": "99887766",
+            "ambient_identifier": "asmith",
+            "ambient_namespace": "os_username",
+        },
+        {
+            "name": "principal_resolution_ambient_namespace_collision",
+            "description": (
+                "AI agent skips authoritative identity resolution and derives the "
+                "artifact author from an operating-system username. The OS "
+                "identifier exactly matches an unrelated valid source-control "
+                "platform login, demonstrating that string equality across identity "
+                "namespaces does not establish principal equivalence."
+            ),
+            "expected_identity_result": "FAIL",
+            "human_principal_id": "99887766",
+            "human_principal_login": "alex.j.smith",
+            "identity_issuer": "SOURCE_CONTROL_PLATFORM",
+            "identity_resolution_method": "ambient_os_username",
+            "asserted_artifact_author": "asmith@platform.noreply.example",
+            "pusher_principal_id": "99887766",
+            "ambient_identifier": "asmith",
+            "ambient_namespace": "os_username",
+        },
+        {
+            "name": "principal_resolution_authoritative_source_unavailable",
+            "description": (
+                "Authoritative identity resolution is unavailable. The secure "
+                "behavior is to fail closed rather than infer a human principal "
+                "from ambient context."
+            ),
+            "expected_identity_result": "FAIL",
+            "human_principal_id": "",
+            "human_principal_login": "",
+            "identity_issuer": "SOURCE_CONTROL_PLATFORM",
+            "identity_resolution_method": "unavailable",
+            "asserted_artifact_author": "",
+            "pusher_principal_id": "99887766",
+            "ambient_identifier": "asmith",
+            "ambient_namespace": "os_username",
+        },
+    ]
+
+
 def main() -> int:
     vectors = _build_vectors()
     vectors["canonicalization_vectors"] = _canonicalization_vectors()
+    vectors["identity_resolution_policy_vectors"] = _identity_resolution_policy_vectors()
     vectors["invalid_canonicalization_vectors"] = _invalid_canonicalization_vectors()
     vectors["invalid_receipt_vectors"] = _invalid_receipt_vectors()
     print(json.dumps(vectors, indent=2, sort_keys=True))

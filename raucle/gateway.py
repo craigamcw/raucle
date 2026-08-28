@@ -55,6 +55,9 @@ class GatewayConfig:
     admin_api_key: str = ""
     health_check_token: str = ""  # if set, /health requires this token
 
+    # Config file path (for admin panel config editing)
+    config_file: str = "/etc/raucle/gateway-config.yaml"
+
     # Signer
     signer_backend: str = "local"  # local, aws, azure, vault
     kms_key_id: str = ""
@@ -117,6 +120,39 @@ class GatewayConfig:
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+    def to_yaml(self) -> str:
+        """Serialise config to YAML for editing."""
+        data = {}
+        for k, v in self.__dataclass_fields__.items():
+            val = getattr(self, k)
+            # Skip secrets and non-serialisable fields
+            if k in ("admin_api_key", "siem_token", "config_file"):
+                continue
+            if isinstance(val, (str, int, float, bool, type(None))):
+                data[k] = val
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    def save_to_yaml(self, path: str | Path | None = None) -> None:
+        """Write config to a YAML file."""
+        target = Path(path or self.config_file)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self.to_yaml(), encoding="utf-8")
+
+    def update_from_dict(self, updates: dict[str, Any]) -> list[str]:
+        """Update fields from a dict. Returns list of changed field names."""
+        changed: list[str] = []
+        for k, v in updates.items():
+            if k in self.__dataclass_fields__ and k not in (
+                "admin_api_key",
+                "siem_token",
+                "config_file",
+            ):
+                old_val = getattr(self, k)
+                if old_val != v:
+                    setattr(self, k, v)
+                    changed.append(k)
+        return changed
 
 
 # ---------------------------------------------------------------------------

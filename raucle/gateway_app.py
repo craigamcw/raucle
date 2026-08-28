@@ -52,6 +52,30 @@ class UserCreateRequest(BaseModel):
     name: str = Field(default="")
 
 
+class ConfigUpdateRequest(BaseModel):
+    """Update gateway configuration fields."""
+
+    host: str | None = None
+    port: int | None = None
+    admin_port: int | None = None
+    signer_backend: str | None = None
+    kms_key_id: str | None = None
+    kms_region: str | None = None
+    policy_file: str | None = None
+    policy_dir: str | None = None
+    receipt_store: str | None = None
+    audit_chain: str | None = None
+    audit_persist: bool | None = None
+    audit_log_file: str | None = None
+    siem_enabled: bool | None = None
+    siem_backend: str | None = None
+    siem_url: str | None = None
+    siem_token: str | None = None
+    compliance_framework: str | None = None
+    registry_path: str | None = None
+    health_check_token: str | None = None
+
+
 class SIEMConfigRequest(BaseModel):
     """Update SIEM forwarding configuration."""
 
@@ -411,15 +435,98 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
     def get_config(authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "config")
+        c = gateway.config
         return {
-            "signer_backend": gateway.config.signer_backend,
-            "policy_file": gateway.config.policy_file,
-            "receipt_store": gateway.config.receipt_store,
-            "audit_chain": gateway.config.audit_chain,
-            "compliance_framework": gateway.config.compliance_framework,
-            "registry_path": gateway.config.registry_path,
-            "gateway_port": gateway.config.port,
-            "admin_port": gateway.config.admin_port,
+            "host": c.host,
+            "port": c.port,
+            "admin_port": c.admin_port,
+            "signer_backend": c.signer_backend,
+            "kms_key_id": c.kms_key_id,
+            "kms_region": c.kms_region,
+            "policy_file": c.policy_file,
+            "policy_dir": c.policy_dir,
+            "receipt_store": c.receipt_store,
+            "audit_chain": c.audit_chain,
+            "audit_persist": c.audit_persist,
+            "audit_log_file": c.audit_log_file,
+            "siem_enabled": c.siem_enabled,
+            "siem_backend": c.siem_backend,
+            "siem_url": c.siem_url,
+            "siem_token_configured": bool(c.siem_token),
+            "compliance_framework": c.compliance_framework,
+            "registry_path": c.registry_path,
+            "health_check_token_set": bool(c.health_check_token),
+            "config_file": c.config_file,
+        }
+
+    @app.put("/api/config")
+    def update_config(
+        req: ConfigUpdateRequest,
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        """Update gateway configuration. Writes to YAML config file.
+
+        Accepts a JSON body with any GatewayConfig fields (except admin_api_key).
+        Changes are applied to the running gateway and persisted to disk.
+        Some changes (ports, host, signer) require a restart to take effect.
+        """
+        user = check_auth(authorization)
+        check_access(user, "config")
+
+        # Build updates dict from non-None fields
+        updates = {k: v for k, v in req.model_dump().items() if v is not None}
+
+        if not updates:
+            return {
+                "status": "ok",
+                "changed": [],
+                "restart_needed": False,
+                "message": "No changes detected",
+            }
+
+        # Apply changes to the running config
+        changed = gateway.config.update_from_dict(updates)
+
+        # Handle SIEM token separately (not in update_from_dict for security)
+        if req.siem_token is not None:
+            gateway.config.siem_token = req.siem_token
+            gateway.siem.token = req.siem_token
+            changed.append("siem_token")
+        if req.health_check_token is not None:
+            gateway.config.health_check_token = req.health_check_token
+            changed.append("health_check_token")
+
+        # Persist to YAML file
+        try:
+            gateway.config.save_to_yaml()
+        except Exception as exc:
+            return {
+                "status": "partial",
+                "changed": changed,
+                "restart_needed": False,
+                "warning": f"Config updated in memory but failed to persist: {exc}",
+            }
+
+        # Apply runtime changes that can take effect immediately
+        if "siem_enabled" in changed:
+            gateway.siem.enabled = gateway.config.siem_enabled
+        if "siem_backend" in changed:
+            gateway.siem.backend = gateway.config.siem_backend
+        if "siem_url" in changed:
+            gateway.siem.url = gateway.config.siem_url
+        if "audit_persist" in changed:
+            pass  # takes effect on next connection log
+
+        restart_needed = any(
+            f in changed for f in ("host", "port", "admin_port", "signer_backend", "kms_key_id")
+        )
+        return {
+            "status": "ok",
+            "changed": changed,
+            "restart_needed": restart_needed,
+            "message": f"Config saved to {gateway.config.config_file}"
+            if changed
+            else "No changes detected",
         }
 
     # --- Admin Panel UI ---
@@ -657,7 +764,47 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
         </div>
       </div>
     </div>
-    <div id="tab-config" class="hidden"><div class="card"><div class="card-title">Configuration</div><pre id="configView"></pre></div></div>
+    <div id="tab-config" class="hidden">
+      <div class="card"><div class="card-title">Gateway Configuration</div>
+        <div id="configForm" style="display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;max-width:700px">
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Host</label><input class="input" id="cfg-host" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Gateway Port</label><input class="input" id="cfg-port" type="number" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Admin Port</label><input class="input" id="cfg-admin_port" type="number" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Signer Backend</label>
+            <select class="input" id="cfg-signer_backend" style="width:100%">
+              <option value="local">local</option><option value="aws">aws</option><option value="azure">azure</option><option value="vault">vault</option>
+            </select></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">KMS Key ID</label><input class="input" id="cfg-kms_key_id" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">KMS Region</label><input class="input" id="cfg-kms_region" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Policy File</label><input class="input" id="cfg-policy_file" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Policy Directory</label><input class="input" id="cfg-policy_dir" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Receipt Store</label><input class="input" id="cfg-receipt_store" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Audit Chain</label><input class="input" id="cfg-audit_chain" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Audit Log File</label><input class="input" id="cfg-audit_log_file" style="width:100%"></div>
+          <div style="display:flex;align-items:end;gap:8px">
+            <label class="toggle"><input type="checkbox" id="cfg-audit_persist"> Audit Persist</label>
+          </div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Compliance Framework</label>
+            <select class="input" id="cfg-compliance_framework" style="width:100%">
+              <option value="eu-ai-act">eu-ai-act</option><option value="iso-42001">iso-42001</option><option value="soc2">soc2</option>
+            </select></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Registry Path</label><input class="input" id="cfg-registry_path" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">SIEM Backend</label>
+            <select class="input" id="cfg-siem_backend" style="width:100%">
+              <option value="">(disabled)</option><option value="splunk">splunk</option><option value="elastic">elastic</option><option value="sentinel">sentinel</option>
+            </select></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">SIEM URL</label><input class="input" id="cfg-siem_url" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">SIEM Token</label><input class="input" id="cfg-siem_token" type="password" placeholder="(unchanged)" style="width:100%"></div>
+          <div><label style="font-size:12px;color:#737373;display:block;margin-bottom:4px">Health Check Token</label><input class="input" id="cfg-health_check_token" type="password" placeholder="(unchanged)" style="width:100%"></div>
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="saveConfig()">Save Config</button>
+          <button class="btn btn-secondary" onclick="loadConfig()">Reset</button>
+        </div>
+        <div id="configStatus" style="margin-top:12px;font-size:13px"></div>
+        <div style="margin-top:16px"><pre id="configView" style="display:none"></pre></div>
+      </div>
+    </div>
 
   </div>
 </div>
@@ -898,7 +1045,47 @@ function disableMfa(key){
   if(!confirm('Disable MFA for this user?'))return;
   api(`/api/users/${encodeURIComponent(key)}/mfa/disable`,{method:'POST'}).then(r=>r.json()).then(d=>{alert('MFA disabled');loadUsers();});
 }
-function loadConfig(){api('/api/config').then(r=>r.json()).then(d=>{document.getElementById('configView').textContent=JSON.stringify(d,null,2);});}
+function loadConfig(){api('/api/config').then(r=>r.json()).then(d=>{
+  // Populate form fields
+  const fields=['host','port','admin_port','signer_backend','kms_key_id','kms_region','policy_file','policy_dir','receipt_store','audit_chain','audit_log_file','siem_backend','siem_url','compliance_framework','registry_path'];
+  fields.forEach(f=>{const el=document.getElementById('cfg-'+f);if(el&&d[f]!==undefined)el.value=d[f];});
+  const checks=['audit_persist'];
+  checks.forEach(f=>{const el=document.getElementById('cfg-'+f);if(el&&d[f]!==undefined)el.checked=d[f];});
+  // Clear password fields (don't show existing secrets)
+  document.getElementById('cfg-siem_token').value='';
+  document.getElementById('cfg-health_check_token').value='';
+  document.getElementById('configStatus').textContent='';
+  // Also show raw YAML for reference
+  document.getElementById('configView').textContent=JSON.stringify(d,null,2);
+  document.getElementById('configView').style.display='block';
+});}
+function saveConfig(){
+  const body={};
+  const fields=['host','port','admin_port','signer_backend','kms_key_id','kms_region','policy_file','policy_dir','receipt_store','audit_chain','audit_log_file','siem_backend','siem_url','compliance_framework','registry_path'];
+  fields.forEach(f=>{const el=document.getElementById('cfg-'+f);if(el&&el.value!=='')body[f]=el.value;});
+  body['audit_persist']=document.getElementById('cfg-audit_persist').checked;
+  const st=document.getElementById('cfg-siem_token').value;
+  if(st)body['siem_token']=st;
+  const ht=document.getElementById('cfg-health_check_token').value;
+  if(ht)body['health_check_token']=ht;
+  api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{
+    const status=document.getElementById('configStatus');
+    if(d.status==='ok'){
+      status.style.color='#22c55e';
+      status.textContent=`Saved: ${d.changed.length} fields changed. File: ${d.message}`;
+      if(d.restart_needed){
+        status.textContent+=' - Restart needed for host/port/signer changes.';
+        status.style.color='#e5b85c';
+      }
+    } else if(d.status==='partial'){
+      status.style.color='#e5b85c';
+      status.textContent=`Partial: ${d.warning}`;
+    } else {
+      status.style.color='#ef4444';
+      status.textContent='Error: '+JSON.stringify(d);
+    }
+  });
+}
 
 setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden')&&!document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);
 window.addEventListener('resize',()=>{if(!document.getElementById('tab-connections').classList.contains('hidden'))drawFlowLines(getFiltered());});

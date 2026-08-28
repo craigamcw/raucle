@@ -385,106 +385,101 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     background: #fff; color: #171717; }
-  /* Header */
   .header { display: flex; align-items: center; justify-content: space-between;
     padding: 10px 24px; border-bottom: 1px solid #f0f0f0; position: sticky; top: 0; background: #fff; z-index: 40; }
   .header-left { display: flex; align-items: center; gap: 16px; }
   .logo { font-size: 18px; font-weight: 600; letter-spacing: -0.025em; }
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px;
     background: #f5f5f5; color: #737373; font-weight: 500; }
-  /* Nav tabs */
   .tabs { display: flex; gap: 2px; padding: 0 24px; border-bottom: 1px solid #f0f0f0; }
   .tab { padding: 10px 16px; cursor: pointer; color: #a3a3a3; font-size: 14px;
     border-bottom: 2px solid transparent; transition: all 0.15s; }
   .tab:hover { color: #525252; }
   .tab.active { color: #171717; border-bottom-color: #171717; }
-  /* Layout */
-  .content { max-width: 1200px; margin: 0 auto; padding: 24px; }
-  /* Cards */
+  .content { max-width: 1400px; margin: 0 auto; padding: 24px; }
   .card { background: #fff; border: 1px solid #f0f0f0; border-radius: 12px;
     padding: 24px; margin-bottom: 16px; }
   .card-title { font-size: 13px; font-weight: 600; color: #737373;
     text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px; }
-  /* Stats grid */
   .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
   .stat { text-align: center; padding: 16px 0; }
   .stat-value { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; }
   .stat-label { font-size: 12px; color: #a3a3a3; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .stat-allow .stat-value { color: #171717; }
-  .stat-deny .stat-value { color: #525252; }
-  .stat-escalate .stat-value { color: #737373; }
-  /* Tables */
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; padding: 8px 12px; font-size: 12px; font-weight: 600;
-    color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em;
-    border-bottom: 1px solid #f0f0f0; }
+    color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #f0f0f0; }
   td { padding: 10px 12px; font-size: 13px; border-bottom: 1px solid #f7f7f7; }
   tr:hover td { background: #fafafa; }
-  /* Badges */
   .badge-allow { background: #171717; color: #fff; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; }
   .badge-deny { background: #f5f5f5; color: #525252; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; }
   .badge-escalate { background: #f5f5f5; color: #737373; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; border: 1px solid #e5e5e5; }
-  /* Buttons */
   .btn { background: #171717; color: #fff; border: none; padding: 8px 20px;
     border-radius: 999px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.15s; }
   .btn:hover { background: #000; }
   .btn-secondary { background: #f5f5f5; color: #171717; }
   .btn-secondary:hover { background: #ebebeb; }
-  .btn-danger { background: #ef4444; }
-  .btn-danger:hover { background: #dc2626; }
-  /* Inputs */
   .input { padding: 8px 14px; background: #fff; border: 1px solid #e5e5e5;
     border-radius: 999px; font-size: 14px; font-family: inherit; color: #171717;
     outline: none; transition: border-color 0.15s; }
   .input:focus { border-color: #171717; }
   select.input { border-radius: 999px; }
-  textarea.input { border-radius: 12px; resize: vertical; }
-  /* Editor */
+  textarea.input { border-radius: 12px; }
   .editor { width: 100%; height: 400px; background: #fafafa; color: #171717;
     border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px;
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; resize: vertical; }
   .editor:focus { outline: none; border-color: #171717; }
-  /* Actions */
   .actions { display: flex; gap: 8px; margin-top: 16px; }
-  /* Login */
   .login { max-width: 360px; margin: 80px auto; }
-  .login .input { width: 100%; margin-bottom: 12px; box-sizing: border-box; }
-  /* Filter bar */
-  .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
-  .filter-bar .input { min-width: 120px; }
-  /* Toggle */
+  .login .input { width: 100%; margin-bottom: 12px; }
+  .hidden { display: none; }
+  pre { background: #fafafa; padding: 16px; border-radius: 12px; border: 1px solid #f0f0f0; overflow-x: auto; font-size: 13px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
   .toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px; color: #525252; }
   .toggle input { width: 16px; height: 16px; accent-color: #171717; }
-  /* Flow viz */
-  .flow-viz { display: flex; align-items: center; justify-content: center; gap: 0;
-    padding: 24px 0; flex-wrap: wrap; }
-  .flow-node { border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px 20px;
-    min-width: 140px; text-align: center; background: #fafafa; }
-  .flow-node-label { font-size: 11px; color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
-  .flow-node-value { font-size: 15px; font-weight: 600; color: #171717; }
-  .flow-arrow { color: #d4d4d4; font-size: 20px; padding: 0 12px; }
-  .flow-decision { font-size: 12px; font-weight: 600; margin-top: 6px; }
-  /* Connection table */
+  .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .file-list { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .file-chip { padding: 4px 12px; border-radius: 999px; background: #f5f5f5; font-size: 12px; color: #525252; cursor: pointer; }
+  .file-chip:hover { background: #ebebeb; }
+  .file-chip.active { background: #171717; color: #fff; }
+
+  /* === TRAFFIC FLOW (Netbird-style three-column) === */
+  .flow-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; min-height: 400px; }
+  .flow-col { border: 1px solid #f0f0f0; display: flex; flex-direction: column; }
+  .flow-col-header { padding: 12px 16px; font-size: 13px; font-weight: 600; color: #737373;
+    text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #f0f0f0;
+    display: flex; align-items: center; justify-content: space-between; background: #fafafa; }
+  .flow-col-header .count { font-size: 11px; color: #a3a3a3; font-weight: 400; }
+  .flow-col-body { flex: 1; overflow-y: auto; max-height: 350px; }
+  .flow-item { padding: 10px 16px; border-bottom: 1px solid #f7f7f7; cursor: pointer; transition: all 0.15s; }
+  .flow-item:hover { background: #f5f5f5; }
+  .flow-item.active { background: #f0f0f0; border-left: 3px solid #171717; }
+  .flow-item-name { font-size: 13px; font-weight: 500; color: #171717; }
+  .flow-item-meta { font-size: 11px; color: #a3a3a3; margin-top: 2px; }
+  .flow-item-bar { height: 3px; border-radius: 2px; margin-top: 6px; background: #f0f0f0; overflow: hidden; }
+  .flow-item-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+  .flow-center-pipeline { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; gap: 12px; }
+  .flow-pipeline-node { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px 20px; text-align: center; background: #fff; min-width: 160px; }
+  .flow-pipeline-label { font-size: 11px; color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em; }
+  .flow-pipeline-value { font-size: 14px; font-weight: 600; margin-top: 4px; }
+  .flow-pipeline-decision { font-size: 12px; font-weight: 600; margin-top: 4px; }
+  .flow-arrow-icon { color: #d4d4d4; font-size: 18px; }
+  .flow-col-filter { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+  .flow-col-filter input { width: 100%; font-size: 12px; padding: 6px 10px; }
+  .flow-empty { text-align: center; padding: 40px 16px; color: #a3a3a3; font-size: 13px; }
+  .direction-badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 500; margin-left: 6px; }
+  .dir-inbound { background: #eff6ff; color: #2563eb; }
+  .dir-outbound { background: #f0fdf4; color: #16a34a; }
+
+  /* Connection log table */
   .conn-table { max-height: 400px; overflow-y: auto; }
   .conn-row { cursor: pointer; }
   .conn-row.selected td { background: #f5f5f5; }
-  /* Live indicator */
-  .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    background: #22c55e; margin-right: 6px; animation: pulse 2s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  /* Hidden */
-  .hidden { display: none; }
-  /* Pre */
-  pre { background: #fafafa; padding: 16px; border-radius: 12px; border: 1px solid #f0f0f0;
-    overflow-x: auto; font-size: 13px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  /* Timestamp */
-  .flow-timestamp { text-align: center; color: #a3a3a3; font-size: 12px; margin-top: 8px; }
-  /* Policy file list */
-  .file-list { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-  .file-chip { padding: 4px 12px; border-radius: 999px; background: #f5f5f5; font-size: 12px;
-    color: #525252; cursor: pointer; transition: all 0.15s; }
-  .file-chip:hover { background: #ebebeb; }
-  .file-chip.active { background: #171717; color: #fff; }
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+
+  /* Direction toggle (Netbird style) */
+  .dir-toggle { display: inline-flex; background: #f5f5f5; border-radius: 8px; padding: 2px; gap: 2px; }
+  .dir-toggle button { border: none; background: transparent; padding: 6px 14px; font-size: 13px; border-radius: 6px; cursor: pointer; color: #737373; font-family: inherit; }
+  .dir-toggle button.active { background: #fff; color: #171717; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 </style>
 </head>
 <body>
@@ -514,6 +509,7 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
     <div class="tab" onclick="showTab('config',this)">Config</div>
   </div>
   <div class="content">
+
     <!-- DASHBOARD -->
     <div id="tab-dashboard">
       <div class="card"><div class="card-title">Gate Decisions</div>
@@ -525,44 +521,49 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- CONNECTIONS -->
+    <!-- CONNECTIONS (Netbird-style three-column flow) -->
     <div id="tab-connections" class="hidden">
       <div class="card">
-        <div class="card-title"><span class="live-dot"></span>Live Connection Flow</div>
-        <div class="flow-viz" id="flowViz">
-          <div class="flow-node">
-            <div class="flow-node-label">Source</div>
-            <div class="flow-node-value" id="flowSource">--</div>
-          </div>
-          <div class="flow-arrow">&#8594;</div>
-          <div class="flow-node">
-            <div class="flow-node-label">Policy / Gate</div>
-            <div class="flow-node-value" id="flowPolicy">--</div>
-            <div class="flow-decision" id="flowDecision">--</div>
-          </div>
-          <div class="flow-arrow">&#8594;</div>
-          <div class="flow-node">
-            <div class="flow-node-label">Destination</div>
-            <div class="flow-node-value" id="flowDest">--</div>
-          </div>
-        </div>
-        <div class="flow-timestamp" id="flowTimestamp">No connections yet</div>
-      </div>
-      <div class="card">
-        <div class="card-title">Connection Log</div>
+        <div class="card-title"><span class="live-dot"></span>Traffic Flow</div>
         <div class="filter-bar">
+          <div class="dir-toggle">
+            <button class="active" onclick="setDirFilter('all',this)">All</button>
+            <button onclick="setDirFilter('inbound',this)">Inbound</button>
+            <button onclick="setDirFilter('outbound',this)">Outbound</button>
+          </div>
           <select class="input" id="filterDecision">
             <option value="">All Decisions</option>
             <option value="allow">Allow</option>
             <option value="deny">Deny</option>
             <option value="escalate">Escalate</option>
           </select>
-          <input class="input" id="filterTool" placeholder="Tool">
-          <input class="input" id="filterSource" placeholder="Source">
-          <input class="input" id="filterDest" placeholder="Destination">
-          <button class="btn-secondary btn" onclick="clearFilters()">Clear</button>
+          <input class="input" id="filterTool" placeholder="Filter by tool...">
           <label class="toggle"><input type="checkbox" id="liveMode" checked onchange="loadConnections()"> Live</label>
         </div>
+        <div class="flow-container" id="flowContainer">
+          <!-- Left: Inbound Sources -->
+          <div class="flow-col">
+            <div class="flow-col-header">Inbound Sources <span class="count" id="srcCount">0</span></div>
+            <div class="flow-col-filter"><input class="input" id="srcFilter" placeholder="Filter sources..." oninput="renderFlowColumns()"></div>
+            <div class="flow-col-body" id="srcList"></div>
+          </div>
+          <!-- Center: Gate Processing -->
+          <div class="flow-col" style="border-left: 2px solid #f0f0f0; border-right: 2px solid #f0f0f0;">
+            <div class="flow-col-header">Gate Processing <span class="count" id="midCount">0</span></div>
+            <div class="flow-col-filter"><input class="input" id="midFilter" placeholder="Filter by tool or policy..." oninput="renderFlowColumns()"></div>
+            <div class="flow-col-body" id="midList"></div>
+          </div>
+          <!-- Right: Outbound Destinations -->
+          <div class="flow-col">
+            <div class="flow-col-header">Outbound Destinations <span class="count" id="dstCount">0</span></div>
+            <div class="flow-col-filter"><input class="input" id="dstFilter" placeholder="Filter destinations..." oninput="renderFlowColumns()"></div>
+            <div class="flow-col-body" id="dstList"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Connection Log</div>
         <div class="conn-table">
           <table><thead><tr><th>Time</th><th>Source</th><th>Tool</th><th>Policy</th><th>Decision</th><th>Destination</th><th>Reason</th><th>Latency</th></tr></thead>
           <tbody id="connBody"></tbody></table>
@@ -624,12 +625,17 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
     <div id="tab-config" class="hidden">
       <div class="card"><div class="card-title">Configuration</div><pre id="configView"></pre></div>
     </div>
+
   </div>
 </div>
 
 <script>
 let key = '';
 let connPollId = null;
+let allConns = [];
+let dirFilter = 'all';
+let selectedSource = null;
+let selectedDest = null;
 
 function login() {
   key = document.getElementById('apiKey').value;
@@ -663,78 +669,194 @@ function loadAll() { loadStats(); }
 function loadStats() {
   api('/api/stats').then(r=>r.json()).then(d=>{
     document.getElementById('statsGrid').innerHTML =
-      `<div class="stat stat-allow"><div class="stat-value">${d.total_requests||0}</div><div class="stat-label">Total</div></div>` +
-      `<div class="stat stat-allow"><div class="stat-value">${d.allowed||0}</div><div class="stat-label">Allowed</div></div>` +
-      `<div class="stat stat-deny"><div class="stat-value">${d.denied||0}</div><div class="stat-label">Denied</div></div>` +
-      `<div class="stat stat-escalate"><div class="stat-value">${d.escalated||0}</div><div class="stat-label">Escalated</div></div>` +
+      `<div class="stat"><div class="stat-value">${d.total_requests||0}</div><div class="stat-label">Total</div></div>` +
+      `<div class="stat"><div class="stat-value">${d.allowed||0}</div><div class="stat-label">Allowed</div></div>` +
+      `<div class="stat"><div class="stat-value">${d.denied||0}</div><div class="stat-label">Denied</div></div>` +
+      `<div class="stat"><div class="stat-value">${d.escalated||0}</div><div class="stat-label">Escalated</div></div>` +
       `<div class="stat"><div class="stat-value">${d.avg_latency_us||0}</div><div class="stat-label">Avg us</div></div>`;
     let tb = document.getElementById('toolTableBody'); tb.innerHTML='';
     Object.entries(d.tools||{}).forEach(([t,s])=>tb.innerHTML+=`<tr><td>${esc(t)}</td><td>${s.allow||0}</td><td>${s.deny||0}</td><td>${s.escalate||0}</td></tr>`);
   });
 }
 
-// --- CONNECTIONS ---
 function esc(s) { return s ? s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : '--'; }
 
+function setDirFilter(d, el) {
+  dirFilter = d;
+  document.querySelectorAll('.dir-toggle button').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  loadConnections();
+}
+
+// === CONNECTIONS (Netbird-style three-column flow) ===
 function loadConnections() {
-  let params = new URLSearchParams({limit: 200});
+  let params = new URLSearchParams({limit: 500});
   let fd = document.getElementById('filterDecision').value;
   let ft = document.getElementById('filterTool').value;
-  let fs = document.getElementById('filterSource').value;
-  let fde = document.getElementById('filterDest').value;
   if (fd) params.set('decision', fd);
   if (ft) params.set('tool', ft);
-  if (fs) params.set('source', fs);
-  if (fde) params.set('destination', fde);
   api('/api/connections?' + params.toString()).then(r=>r.json()).then(d=>{
-    let tb = document.getElementById('connBody');
-    tb.innerHTML = '';
-    (d.connections||[]).forEach((c,i) => {
-      let badge = c.decision === 'allow' ? 'badge-allow' : c.decision === 'deny' ? 'badge-deny' : 'badge-escalate';
-      let time = c.timestamp ? c.timestamp.substring(11,19) : '--:--:--';
-      let policy = c.policy ? c.policy.split('/').pop() : '--';
-      tb.innerHTML += `<tr class="conn-row" onclick="selectConn(${i})" data-idx="${i}">
-        <td>${esc(time)}</td><td>${esc(c.source)}</td><td>${esc(c.tool)}</td>
-        <td>${esc(policy)}</td><td><span class="${badge}">${esc(c.decision)}</span></td>
-        <td>${esc(c.destination)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.reason)}</td>
-        <td>${c.latency_us||0}us</td></tr>`;
-    });
-    if (d.connections && d.connections.length > 0) { updateFlowViz(d.connections[0]); }
-    window._conns = d.connections || [];
+    allConns = d.connections || [];
+    renderFlowColumns();
+    renderConnTable();
   }).catch(()=>{});
+}
+
+function getFilteredConns() {
+  let fd = document.getElementById('filterDecision').value;
+  let ft = document.getElementById('filterTool').value.toLowerCase();
+  let conns = allConns;
+  if (fd) conns = conns.filter(c => c.decision === fd);
+  if (ft) conns = conns.filter(c => (c.tool||'').toLowerCase().includes(ft));
+  if (selectedSource) conns = conns.filter(c => c.source === selectedSource);
+  if (selectedDest) conns = conns.filter(c => c.destination === selectedDest);
+  return conns;
+}
+
+function renderFlowColumns() {
+  let conns = getFilteredConns();
+  let sf = (document.getElementById('srcFilter')?.value || '').toLowerCase();
+  let mf = (document.getElementById('midFilter')?.value || '').toLowerCase();
+  let df = (document.getElementById('dstFilter')?.value || '').toLowerCase();
+
+  // Group by source
+  let bySource = {};
+  conns.forEach(c => {
+    let s = c.source || 'unknown';
+    if (dirFilter === 'outbound') return; // inbound column shows sources
+    if (sf && !s.toLowerCase().includes(sf)) return;
+    if (!bySource[s]) bySource[s] = { total: 0, allow: 0, deny: 0, escalate: 0, conns: [] };
+    bySource[s].total++;
+    bySource[s][c.decision] = (bySource[s][c.decision]||0) + 1;
+    bySource[s].conns.push(c);
+  });
+
+  // Group by destination
+  let byDest = {};
+  conns.forEach(c => {
+    let d = c.destination || 'unknown';
+    if (dirFilter === 'inbound') return; // outbound column shows destinations
+    if (df && !d.toLowerCase().includes(df)) return;
+    if (!byDest[d]) byDest[d] = { total: 0, allow: 0, deny: 0, escalate: 0, conns: [] };
+    byDest[d].total++;
+    byDest[d][c.decision] = (byDest[d][c.decision]||0) + 1;
+    byDest[d].conns.push(c);
+  });
+
+  // Group by tool/policy (center column)
+  let byTool = {};
+  conns.forEach(c => {
+    let t = c.tool || 'unknown';
+    let p = c.policy || '';
+    if (mf && !t.toLowerCase().includes(mf) && !(p||'').toLowerCase().includes(mf)) return;
+    if (!byTool[t]) byTool[t] = { total: 0, allow: 0, deny: 0, escalate: 0, policy: p, conns: [] };
+    byTool[t].total++;
+    byTool[t][c.decision] = (byTool[t][c.decision]||0) + 1;
+    byTool[t].conns.push(c);
+  });
+
+  // Render source column
+  let srcHTML = '';
+  let srcEntries = Object.entries(bySource).sort((a,b) => b[1].total - a[1].total);
+  document.getElementById('srcCount').textContent = srcEntries.length;
+  if (srcEntries.length === 0) {
+    srcHTML = '<div class="flow-empty">No inbound sources</div>';
+  } else {
+    srcEntries.forEach(([name, data]) => {
+      let pct = Math.round(data.allow / data.total * 100);
+      let isActive = selectedSource === name;
+      srcHTML += `<div class="flow-item${isActive?' active':''}" onclick="toggleSource('${esc(name)}')">
+        <div class="flow-item-name">${esc(name)} <span class="direction-badge dir-inbound">in</span></div>
+        <div class="flow-item-meta">${data.total} calls - ${data.allow||0} allow / ${data.deny||0} deny / ${data.escalate||0} escalate</div>
+        <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
+      </div>`;
+    });
+  }
+  document.getElementById('srcList').innerHTML = srcHTML;
+
+  // Render center (gate processing) column
+  let midHTML = '';
+  let midEntries = Object.entries(byTool).sort((a,b) => b[1].total - a[1].total);
+  document.getElementById('midCount').textContent = midEntries.length;
+  if (midEntries.length === 0) {
+    midHTML = '<div class="flow-empty">No gate activity</div>';
+  } else {
+    midEntries.forEach(([name, data]) => {
+      let pct = Math.round(data.allow / data.total * 100);
+      let policy = data.policy ? data.policy.split('/').pop() : '';
+      midHTML += `<div class="flow-item" onclick="filterByTool('${esc(name)}')">
+        <div class="flow-item-name">${esc(name)}</div>
+        <div class="flow-item-meta">${data.total} calls - ${data.allow||0} allow / ${data.deny||0} deny / ${data.escalate||0} escalate</div>
+        ${policy ? `<div class="flow-item-meta">policy: ${esc(policy)}</div>` : ''}
+        <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
+      </div>`;
+    });
+  }
+  document.getElementById('midList').innerHTML = midHTML;
+
+  // Render destination column
+  let dstHTML = '';
+  let dstEntries = Object.entries(byDest).sort((a,b) => b[1].total - a[1].total);
+  document.getElementById('dstCount').textContent = dstEntries.length;
+  if (dstEntries.length === 0) {
+    dstHTML = '<div class="flow-empty">No outbound destinations</div>';
+  } else {
+    dstEntries.forEach(([name, data]) => {
+      let pct = Math.round(data.allow / data.total * 100);
+      let isActive = selectedDest === name;
+      dstHTML += `<div class="flow-item${isActive?' active':''}" onclick="toggleDest('${esc(name)}')">
+        <div class="flow-item-name">${esc(name)} <span class="direction-badge dir-outbound">out</span></div>
+        <div class="flow-item-meta">${data.total} calls - ${data.allow||0} allow / ${data.deny||0} deny / ${data.escalate||0} escalate</div>
+        <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
+      </div>`;
+    });
+  }
+  document.getElementById('dstList').innerHTML = dstHTML;
+}
+
+function toggleSource(name) {
+  selectedSource = selectedSource === name ? null : name;
+  renderFlowColumns();
+  renderConnTable();
+}
+
+function toggleDest(name) {
+  selectedDest = selectedDest === name ? null : name;
+  renderFlowColumns();
+  renderConnTable();
+}
+
+function filterByTool(tool) {
+  document.getElementById('filterTool').value = tool;
+  loadConnections();
+}
+
+function renderConnTable() {
+  let conns = getFilteredConns();
+  let tb = document.getElementById('connBody');
+  tb.innerHTML = '';
+  conns.forEach((c,i) => {
+    let badge = c.decision === 'allow' ? 'badge-allow' : c.decision === 'deny' ? 'badge-deny' : 'badge-escalate';
+    let time = c.timestamp ? c.timestamp.substring(11,19) : '--:--:--';
+    let policy = c.policy ? c.policy.split('/').pop() : '--';
+    tb.innerHTML += `<tr class="conn-row" onclick="selectConn(${i})" data-idx="${i}">
+      <td>${esc(time)}</td><td>${esc(c.source)}</td><td>${esc(c.tool)}</td>
+      <td>${esc(policy)}</td><td><span class="${badge}">${esc(c.decision)}</span></td>
+      <td>${esc(c.destination)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.reason)}</td>
+      <td>${c.latency_us||0}us</td></tr>`;
+  });
 }
 
 function selectConn(idx) {
   document.querySelectorAll('.conn-row').forEach(r => r.classList.remove('selected'));
   let row = document.querySelector(`.conn-row[data-idx="${idx}"]`);
   if (row) row.classList.add('selected');
-  if (window._conns && window._conns[idx]) { updateFlowViz(window._conns[idx]); }
-}
-
-function updateFlowViz(c) {
-  document.getElementById('flowSource').textContent = c.source || '--';
-  document.getElementById('flowDest').textContent = c.destination || '--';
-  let policy = c.policy ? c.policy.split('/').pop() : c.tool || '--';
-  document.getElementById('flowPolicy').textContent = policy;
-  let decEl = document.getElementById('flowDecision');
-  decEl.textContent = c.decision || '--';
-  decEl.className = 'flow-decision ' + (c.decision === 'allow' ? 'badge-allow' : c.decision === 'deny' ? 'badge-deny' : 'badge-escalate');
-  document.getElementById('flowTimestamp').textContent = c.timestamp || '';
-}
-
-function clearFilters() {
-  document.getElementById('filterDecision').value = '';
-  document.getElementById('filterTool').value = '';
-  document.getElementById('filterSource').value = '';
-  document.getElementById('filterDest').value = '';
-  loadConnections();
 }
 
 function startConnPolling() {
   stopConnPolling();
-  let live = document.getElementById('liveMode');
   connPollId = setInterval(() => {
-    if (live && live.checked && !document.getElementById('tab-connections').classList.contains('hidden')) { loadConnections(); }
+    if (document.getElementById('liveMode')?.checked && !document.getElementById('tab-connections').classList.contains('hidden')) { loadConnections(); }
   }, 3000);
 }
 function stopConnPolling() { if (connPollId) { clearInterval(connPollId); connPollId = null; } }
@@ -770,35 +892,11 @@ function savePolicy() {
 }
 function reloadPolicy() { api('/api/policies/reload',{method:'POST'}).then(r=>r.json()).then(d=>alert('Reloaded: '+JSON.stringify(d))); }
 
-// --- RECEIPTS ---
 function loadReceipts() { api('/api/receipts?limit=20').then(r=>r.json()).then(d=>{ document.getElementById('receiptsView').textContent=JSON.stringify(d.receipts,null,2); }); }
-
-// --- SIEM ---
-function loadSIEM() { api('/api/siem').then(r=>r.json()).then(d=>{
-  document.getElementById('siemEnabled').checked=d.enabled;
-  document.getElementById('siemBackend').value=d.backend||'';
-  document.getElementById('siemUrl').value=d.url||'';
-}); }
-function saveSIEM() {
-  api('/api/siem',{method:'PUT',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({enabled:document.getElementById('siemEnabled').checked,
-      backend:document.getElementById('siemBackend').value,
-      url:document.getElementById('siemUrl').value,
-      token:document.getElementById('siemToken').value})}).then(r=>r.json()).then(d=>alert('Saved'));
-}
-
-// --- USERS ---
-function loadUsers() { api('/api/users').then(r=>r.json()).then(d=>{
-  let tb=document.getElementById('userTableBody');tb.innerHTML='';
-  d.users.forEach(u=>tb.innerHTML+=`<tr><td>${esc(u.api_key)}</td><td>${esc(u.role)}</td><td>${esc(u.name)}</td></tr>`);
-}); }
-function addUser() {
-  api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({api_key:document.getElementById('newKey').value,
-      role:document.getElementById('newRole').value,
-      name:document.getElementById('newName').value})}).then(r=>r.json()).then(d=>{alert('Added');loadUsers();}); }
-
-// --- CONFIG ---
+function loadSIEM() { api('/api/siem').then(r=>r.json()).then(d=>{ document.getElementById('siemEnabled').checked=d.enabled; document.getElementById('siemBackend').value=d.backend||''; document.getElementById('siemUrl').value=d.url||''; }); }
+function saveSIEM() { api('/api/siem',{method:'PUT',headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:document.getElementById('siemEnabled').checked, backend:document.getElementById('siemBackend').value, url:document.getElementById('siemUrl').value, token:document.getElementById('siemToken').value})}).then(r=>r.json()).then(d=>alert('Saved')); }
+function loadUsers() { api('/api/users').then(r=>r.json()).then(d=>{ let tb=document.getElementById('userTableBody');tb.innerHTML=''; d.users.forEach(u=>tb.innerHTML+=`<tr><td>${esc(u.api_key)}</td><td>${esc(u.role)}</td><td>${esc(u.name)}</td></tr>`); }); }
+function addUser() { api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'}, body:JSON.stringify({api_key:document.getElementById('newKey').value, role:document.getElementById('newRole').value, name:document.getElementById('newName').value})}).then(r=>r.json()).then(d=>{alert('Added');loadUsers();}); }
 function loadConfig() { api('/api/config').then(r=>r.json()).then(d=>{ document.getElementById('configView').textContent=JSON.stringify(d,null,2); }); }
 
 setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden') && !document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);

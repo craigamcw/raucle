@@ -389,44 +389,33 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
     padding: 10px 24px; border-bottom: 1px solid #f0f0f0; position: sticky; top: 0; background: #fff; z-index: 40; }
   .header-left { display: flex; align-items: center; gap: 16px; }
   .logo { font-size: 18px; font-weight: 600; letter-spacing: -0.025em; }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px;
-    background: #f5f5f5; color: #737373; font-weight: 500; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #f5f5f5; color: #737373; font-weight: 500; }
   .tabs { display: flex; gap: 2px; padding: 0 24px; border-bottom: 1px solid #f0f0f0; }
-  .tab { padding: 10px 16px; cursor: pointer; color: #a3a3a3; font-size: 14px;
-    border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .tab { padding: 10px 16px; cursor: pointer; color: #a3a3a3; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.15s; }
   .tab:hover { color: #525252; }
   .tab.active { color: #171717; border-bottom-color: #171717; }
   .content { max-width: 1400px; margin: 0 auto; padding: 24px; }
-  .card { background: #fff; border: 1px solid #f0f0f0; border-radius: 12px;
-    padding: 24px; margin-bottom: 16px; }
-  .card-title { font-size: 13px; font-weight: 600; color: #737373;
-    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px; }
+  .card { background: #fff; border: 1px solid #f0f0f0; border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+  .card-title { font-size: 13px; font-weight: 600; color: #737373; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px; }
   .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
   .stat { text-align: center; padding: 16px 0; }
   .stat-value { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; }
   .stat-label { font-size: 12px; color: #a3a3a3; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
   table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; padding: 8px 12px; font-size: 12px; font-weight: 600;
-    color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #f0f0f0; }
+  th { text-align: left; padding: 8px 12px; font-size: 12px; font-weight: 600; color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #f0f0f0; }
   td { padding: 10px 12px; font-size: 13px; border-bottom: 1px solid #f7f7f7; }
   tr:hover td { background: #fafafa; }
   .badge-allow { background: #171717; color: #fff; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; }
   .badge-deny { background: #f5f5f5; color: #525252; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; }
   .badge-escalate { background: #f5f5f5; color: #737373; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; border: 1px solid #e5e5e5; }
-  .btn { background: #171717; color: #fff; border: none; padding: 8px 20px;
-    border-radius: 999px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.15s; }
+  .btn { background: #171717; color: #fff; border: none; padding: 8px 20px; border-radius: 999px; cursor: pointer; font-size: 14px; font-weight: 500; }
   .btn:hover { background: #000; }
   .btn-secondary { background: #f5f5f5; color: #171717; }
   .btn-secondary:hover { background: #ebebeb; }
-  .input { padding: 8px 14px; background: #fff; border: 1px solid #e5e5e5;
-    border-radius: 999px; font-size: 14px; font-family: inherit; color: #171717;
-    outline: none; transition: border-color 0.15s; }
+  .input { padding: 8px 14px; background: #fff; border: 1px solid #e5e5e5; border-radius: 999px; font-size: 14px; font-family: inherit; color: #171717; outline: none; }
   .input:focus { border-color: #171717; }
-  select.input { border-radius: 999px; }
   textarea.input { border-radius: 12px; }
-  .editor { width: 100%; height: 400px; background: #fafafa; color: #171717;
-    border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; resize: vertical; }
+  .editor { width: 100%; height: 400px; background: #fafafa; color: #171717; border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; resize: vertical; }
   .editor:focus { outline: none; border-color: #171717; }
   .actions { display: flex; gap: 8px; margin-top: 16px; }
   .login { max-width: 360px; margin: 80px auto; }
@@ -441,45 +430,41 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
   .file-chip { padding: 4px 12px; border-radius: 999px; background: #f5f5f5; font-size: 12px; color: #525252; cursor: pointer; }
   .file-chip:hover { background: #ebebeb; }
   .file-chip.active { background: #171717; color: #fff; }
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .dir-toggle { display: inline-flex; background: #f5f5f5; border-radius: 8px; padding: 2px; gap: 2px; }
+  .dir-toggle button { border: none; background: transparent; padding: 6px 14px; font-size: 13px; border-radius: 6px; cursor: pointer; color: #737373; font-family: inherit; }
+  .dir-toggle button.active { background: #fff; color: #171717; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 
-  /* === TRAFFIC FLOW (Netbird-style three-column) === */
-  .flow-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; min-height: 400px; }
-  .flow-col { border: 1px solid #f0f0f0; display: flex; flex-direction: column; }
-  .flow-col-header { padding: 12px 16px; font-size: 13px; font-weight: 600; color: #737373;
-    text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #f0f0f0;
-    display: flex; align-items: center; justify-content: space-between; background: #fafafa; }
+  /* === TRAFFIC FLOW GRAPH (Netbird-style) === */
+  .flow-graph { position: relative; min-height: 500px; overflow: hidden; }
+  .flow-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  .flow-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; position: relative; z-index: 2; }
+  .flow-col { display: flex; flex-direction: column; }
+  .flow-col-mid { border-left: 1px solid #f0f0f0; border-right: 1px solid #f0f0f0; background: #fafafa; }
+  .flow-col-header { padding: 10px 16px; font-size: 12px; font-weight: 600; color: #737373; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center; justify-content: space-between; }
   .flow-col-header .count { font-size: 11px; color: #a3a3a3; font-weight: 400; }
-  .flow-col-body { flex: 1; overflow-y: auto; max-height: 350px; }
-  .flow-item { padding: 10px 16px; border-bottom: 1px solid #f7f7f7; cursor: pointer; transition: all 0.15s; }
+  .flow-col-filter { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+  .flow-col-filter input { width: 100%; font-size: 12px; padding: 6px 10px; border: 1px solid #e5e5e5; border-radius: 8px; }
+  .flow-col-body { flex: 1; overflow-y: auto; max-height: 400px; }
+  .flow-item { padding: 10px 16px; border-bottom: 1px solid #f7f7f7; cursor: pointer; transition: all 0.15s; position: relative; }
   .flow-item:hover { background: #f5f5f5; }
   .flow-item.active { background: #f0f0f0; border-left: 3px solid #171717; }
+  .flow-item.highlighted { background: #f0fdf4; }
   .flow-item-name { font-size: 13px; font-weight: 500; color: #171717; }
   .flow-item-meta { font-size: 11px; color: #a3a3a3; margin-top: 2px; }
   .flow-item-bar { height: 3px; border-radius: 2px; margin-top: 6px; background: #f0f0f0; overflow: hidden; }
   .flow-item-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
-  .flow-center-pipeline { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; gap: 12px; }
-  .flow-pipeline-node { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px 20px; text-align: center; background: #fff; min-width: 160px; }
-  .flow-pipeline-label { font-size: 11px; color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em; }
-  .flow-pipeline-value { font-size: 14px; font-weight: 600; margin-top: 4px; }
-  .flow-pipeline-decision { font-size: 12px; font-weight: 600; margin-top: 4px; }
-  .flow-arrow-icon { color: #d4d4d4; font-size: 18px; }
-  .flow-col-filter { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
-  .flow-col-filter input { width: 100%; font-size: 12px; padding: 6px 10px; }
+  .flow-item-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+  .dot-allow { background: #22c55e; }
+  .dot-deny { background: #ef4444; }
+  .dot-escalate { background: #f59e0b; }
   .flow-empty { text-align: center; padding: 40px 16px; color: #a3a3a3; font-size: 13px; }
-  .direction-badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 500; margin-left: 6px; }
-  .dir-inbound { background: #eff6ff; color: #2563eb; }
-  .dir-outbound { background: #f0fdf4; color: #16a34a; }
+  .protocol-tag { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: #f0f0f0; color: #737373; margin-left: 4px; font-family: ui-monospace, monospace; }
 
-  /* Connection log table */
+  /* Connection log */
   .conn-table { max-height: 400px; overflow-y: auto; }
   .conn-row { cursor: pointer; }
   .conn-row.selected td { background: #f5f5f5; }
-  .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
-
-  /* Direction toggle (Netbird style) */
-  .dir-toggle { display: inline-flex; background: #f5f5f5; border-radius: 8px; padding: 2px; gap: 2px; }
-  .dir-toggle button { border: none; background: transparent; padding: 6px 14px; font-size: 13px; border-radius: 6px; cursor: pointer; color: #737373; font-family: inherit; }
-  .dir-toggle button.active { background: #fff; color: #171717; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 </style>
 </head>
 <body>
@@ -510,7 +495,6 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
   </div>
   <div class="content">
 
-    <!-- DASHBOARD -->
     <div id="tab-dashboard">
       <div class="card"><div class="card-title">Gate Decisions</div>
         <div class="stats-grid" id="statsGrid"></div>
@@ -521,7 +505,7 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- CONNECTIONS (Netbird-style three-column flow) -->
+    <!-- CONNECTIONS - Netbird-style flow graph -->
     <div id="tab-connections" class="hidden">
       <div class="card">
         <div class="card-title"><span class="live-dot"></span>Traffic Flow</div>
@@ -531,37 +515,35 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
             <button onclick="setDirFilter('inbound',this)">Inbound</button>
             <button onclick="setDirFilter('outbound',this)">Outbound</button>
           </div>
-          <select class="input" id="filterDecision">
+          <select class="input" id="filterDecision" onchange="loadConnections()">
             <option value="">All Decisions</option>
             <option value="allow">Allow</option>
             <option value="deny">Deny</option>
             <option value="escalate">Escalate</option>
           </select>
-          <input class="input" id="filterTool" placeholder="Filter by tool...">
           <label class="toggle"><input type="checkbox" id="liveMode" checked onchange="loadConnections()"> Live</label>
         </div>
-        <div class="flow-container" id="flowContainer">
-          <!-- Left: Inbound Sources -->
-          <div class="flow-col">
-            <div class="flow-col-header">Inbound Sources <span class="count" id="srcCount">0</span></div>
-            <div class="flow-col-filter"><input class="input" id="srcFilter" placeholder="Filter sources..." oninput="renderFlowColumns()"></div>
-            <div class="flow-col-body" id="srcList"></div>
-          </div>
-          <!-- Center: Gate Processing -->
-          <div class="flow-col" style="border-left: 2px solid #f0f0f0; border-right: 2px solid #f0f0f0;">
-            <div class="flow-col-header">Gate Processing <span class="count" id="midCount">0</span></div>
-            <div class="flow-col-filter"><input class="input" id="midFilter" placeholder="Filter by tool or policy..." oninput="renderFlowColumns()"></div>
-            <div class="flow-col-body" id="midList"></div>
-          </div>
-          <!-- Right: Outbound Destinations -->
-          <div class="flow-col">
-            <div class="flow-col-header">Outbound Destinations <span class="count" id="dstCount">0</span></div>
-            <div class="flow-col-filter"><input class="input" id="dstFilter" placeholder="Filter destinations..." oninput="renderFlowColumns()"></div>
-            <div class="flow-col-body" id="dstList"></div>
+        <div class="flow-graph" id="flowGraph">
+          <svg class="flow-svg" id="flowSvg"></svg>
+          <div class="flow-cols">
+            <div class="flow-col">
+              <div class="flow-col-header">Inbound Sources <span class="count" id="srcCount">0</span></div>
+              <div class="flow-col-filter"><input id="srcFilter" placeholder="Filter sources..." oninput="renderFlow()"></div>
+              <div class="flow-col-body" id="srcList"></div>
+            </div>
+            <div class="flow-col flow-col-mid">
+              <div class="flow-col-header">Gate Processing <span class="count" id="midCount">0</span></div>
+              <div class="flow-col-filter"><input id="midFilter" placeholder="Filter by tool..." oninput="renderFlow()"></div>
+              <div class="flow-col-body" id="midList"></div>
+            </div>
+            <div class="flow-col">
+              <div class="flow-col-header">Outbound Destinations <span class="count" id="dstCount">0</span></div>
+              <div class="flow-col-filter"><input id="dstFilter" placeholder="Filter destinations..." oninput="renderFlow()"></div>
+              <div class="flow-col-body" id="dstList"></div>
+            </div>
           </div>
         </div>
       </div>
-
       <div class="card">
         <div class="card-title">Connection Log</div>
         <div class="conn-table">
@@ -571,335 +553,218 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- POLICIES -->
     <div id="tab-policies" class="hidden">
-      <div class="card">
-        <div class="card-title">Policy Files</div>
+      <div class="card"><div class="card-title">Policy Files</div>
         <div class="file-list" id="fileList"></div>
         <textarea class="editor" id="policyEditor"></textarea>
-        <div class="actions">
-          <button class="btn" onclick="validatePolicy()">Validate</button>
-          <button class="btn" onclick="savePolicy()">Save & Deploy</button>
-          <button class="btn btn-secondary" onclick="reloadPolicy()">Reload</button>
-        </div>
+        <div class="actions"><button class="btn" onclick="validatePolicy()">Validate</button><button class="btn" onclick="savePolicy()">Save & Deploy</button><button class="btn btn-secondary" onclick="reloadPolicy()">Reload</button></div>
       </div>
     </div>
-
-    <!-- RECEIPTS -->
-    <div id="tab-receipts" class="hidden">
-      <div class="card"><div class="card-title">Recent Receipts</div><pre id="receiptsView">Loading...</pre></div>
+    <div id="tab-receipts" class="hidden"><div class="card"><div class="card-title">Recent Receipts</div><pre id="receiptsView">Loading...</pre></div></div>
+    <div id="tab-siem" class="hidden"><div class="card"><div class="card-title">SIEM Forwarding</div>
+      <label class="toggle" style="margin-bottom:16px"><input type="checkbox" id="siemEnabled"> Enabled</label>
+      <div style="display:flex;flex-direction:column;gap:8px;max-width:400px">
+        <input class="input" id="siemBackend" placeholder="splunk / elastic / sentinel"><input class="input" id="siemUrl" placeholder="SIEM endpoint URL"><input class="input" id="siemToken" type="password" placeholder="SIEM token">
+      </div><div class="actions"><button class="btn" onclick="saveSIEM()">Save</button></div></div>
     </div>
-
-    <!-- SIEM -->
-    <div id="tab-siem" class="hidden">
-      <div class="card">
-        <div class="card-title">SIEM Forwarding</div>
-        <label class="toggle" style="margin-bottom:16px"><input type="checkbox" id="siemEnabled"> Enabled</label>
-        <div style="display:flex;flex-direction:column;gap:8px;max-width:400px">
-          <input class="input" id="siemBackend" placeholder="splunk / elastic / sentinel">
-          <input class="input" id="siemUrl" placeholder="SIEM endpoint URL">
-          <input class="input" id="siemToken" type="password" placeholder="SIEM token">
-        </div>
-        <div class="actions"><button class="btn" onclick="saveSIEM()">Save</button></div>
-      </div>
-    </div>
-
-    <!-- USERS -->
     <div id="tab-users" class="hidden">
-      <div class="card">
-        <div class="card-title">Add User</div>
+      <div class="card"><div class="card-title">Add User</div>
         <div style="display:flex;flex-direction:column;gap:8px;max-width:400px">
-          <input class="input" id="newKey" placeholder="API Key">
-          <input class="input" id="newRole" placeholder="admin / operator / auditor">
-          <input class="input" id="newName" placeholder="Name">
-        </div>
-        <div class="actions"><button class="btn" onclick="addUser()">Add</button></div>
-      </div>
-      <div class="card"><div class="card-title">Users</div>
-        <table><thead><tr><th>Key</th><th>Role</th><th>Name</th></tr></thead>
-        <tbody id="userTableBody"></tbody></table>
-      </div>
+          <input class="input" id="newKey" placeholder="API Key"><input class="input" id="newRole" placeholder="admin / operator / auditor"><input class="input" id="newName" placeholder="Name">
+        </div><div class="actions"><button class="btn" onclick="addUser()">Add</button></div></div>
+      <div class="card"><div class="card-title">Users</div><table><thead><tr><th>Key</th><th>Role</th><th>Name</th></tr></thead><tbody id="userTableBody"></tbody></table></div>
     </div>
-
-    <!-- CONFIG -->
-    <div id="tab-config" class="hidden">
-      <div class="card"><div class="card-title">Configuration</div><pre id="configView"></pre></div>
-    </div>
+    <div id="tab-config" class="hidden"><div class="card"><div class="card-title">Configuration</div><pre id="configView"></pre></div></div>
 
   </div>
 </div>
 
 <script>
-let key = '';
-let connPollId = null;
-let allConns = [];
-let dirFilter = 'all';
-let selectedSource = null;
-let selectedDest = null;
+let key='', connPollId=null, allConns=[], dirFilter='all', selectedSource=null, selectedDest=null;
 
 function login() {
   key = document.getElementById('apiKey').value;
-  fetch('/api/stats', {headers: {'Authorization': key}})
-    .then(r => { if (r.ok) { document.getElementById('login').classList.add('hidden');
-      document.getElementById('main').classList.remove('hidden'); loadAll(); }
-      else { alert('Invalid API key'); } });
+  fetch('/api/stats', {headers:{Authorization:key}}).then(r=>{if(r.ok){document.getElementById('login').classList.add('hidden');document.getElementById('main').classList.remove('hidden');loadAll();}else{alert('Invalid API key');}});
 }
-
-function showTab(t, el) {
-  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-  document.querySelectorAll('[id^=tab-]').forEach(x => x.classList.add('hidden'));
-  el.classList.add('active');
-  document.getElementById('tab-' + t).classList.remove('hidden');
-  if (t === 'dashboard') loadStats();
-  if (t === 'connections') { loadConnections(); startConnPolling(); }
-  else { stopConnPolling(); }
-  if (t === 'policies') loadPolicy();
-  if (t === 'receipts') loadReceipts();
-  if (t === 'siem') loadSIEM();
-  if (t === 'users') loadUsers();
-  if (t === 'config') loadConfig();
+function showTab(t,el) {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('[id^=tab-]').forEach(x=>x.classList.add('hidden'));
+  el.classList.add('active'); document.getElementById('tab-'+t).classList.remove('hidden');
+  if(t==='dashboard')loadStats(); if(t==='connections'){loadConnections();startConnPolling();} else stopConnPolling();
+  if(t==='policies')loadPolicy(); if(t==='receipts')loadReceipts(); if(t==='siem')loadSIEM(); if(t==='users')loadUsers(); if(t==='config')loadConfig();
 }
+function api(p,o){return fetch(p,{...(o||{}),headers:{Authorization:key,...((o||{}).headers||{})}});}
+function loadAll(){loadStats();}
+function loadStats(){api('/api/stats').then(r=>r.json()).then(d=>{
+  document.getElementById('statsGrid').innerHTML=`<div class="stat"><div class="stat-value">${d.total_requests||0}</div><div class="stat-label">Total</div></div><div class="stat"><div class="stat-value">${d.allowed||0}</div><div class="stat-label">Allowed</div></div><div class="stat"><div class="stat-value">${d.denied||0}</div><div class="stat-label">Denied</div></div><div class="stat"><div class="stat-value">${d.escalated||0}</div><div class="stat-label">Escalated</div></div><div class="stat"><div class="stat-value">${d.avg_latency_us||0}</div><div class="stat-label">Avg us</div></div>`;
+  let tb=document.getElementById('toolTableBody');tb.innerHTML='';Object.entries(d.tools||{}).forEach(([t,s])=>tb.innerHTML+=`<tr><td>${esc(t)}</td><td>${s.allow||0}</td><td>${s.deny||0}</td><td>${s.escalate||0}</td></tr>`);
+});}
+function esc(s){return s?s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])):'--';}
+function setDirFilter(d,el){dirFilter=d;document.querySelectorAll('.dir-toggle button').forEach(b=>b.classList.remove('active'));el.classList.add('active');loadConnections();}
 
-function api(path, opts) {
-  return fetch(path, {...(opts||{}), headers: {'Authorization': key, ...((opts||{}).headers||{})}});
-}
-
-function loadAll() { loadStats(); }
-
-function loadStats() {
-  api('/api/stats').then(r=>r.json()).then(d=>{
-    document.getElementById('statsGrid').innerHTML =
-      `<div class="stat"><div class="stat-value">${d.total_requests||0}</div><div class="stat-label">Total</div></div>` +
-      `<div class="stat"><div class="stat-value">${d.allowed||0}</div><div class="stat-label">Allowed</div></div>` +
-      `<div class="stat"><div class="stat-value">${d.denied||0}</div><div class="stat-label">Denied</div></div>` +
-      `<div class="stat"><div class="stat-value">${d.escalated||0}</div><div class="stat-label">Escalated</div></div>` +
-      `<div class="stat"><div class="stat-value">${d.avg_latency_us||0}</div><div class="stat-label">Avg us</div></div>`;
-    let tb = document.getElementById('toolTableBody'); tb.innerHTML='';
-    Object.entries(d.tools||{}).forEach(([t,s])=>tb.innerHTML+=`<tr><td>${esc(t)}</td><td>${s.allow||0}</td><td>${s.deny||0}</td><td>${s.escalate||0}</td></tr>`);
-  });
-}
-
-function esc(s) { return s ? s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : '--'; }
-
-function setDirFilter(d, el) {
-  dirFilter = d;
-  document.querySelectorAll('.dir-toggle button').forEach(b => b.classList.remove('active'));
-  el.classList.add('active');
-  loadConnections();
-}
-
-// === CONNECTIONS (Netbird-style three-column flow) ===
+// === Netbird-style flow graph ===
 function loadConnections() {
-  let params = new URLSearchParams({limit: 500});
-  let fd = document.getElementById('filterDecision').value;
-  let ft = document.getElementById('filterTool').value;
-  if (fd) params.set('decision', fd);
-  if (ft) params.set('tool', ft);
-  api('/api/connections?' + params.toString()).then(r=>r.json()).then(d=>{
-    allConns = d.connections || [];
-    renderFlowColumns();
-    renderConnTable();
-  }).catch(()=>{});
+  let p=new URLSearchParams({limit:500});
+  let fd=document.getElementById('filterDecision').value;
+  if(fd)p.set('decision',fd);
+  api('/api/connections?'+p.toString()).then(r=>r.json()).then(d=>{allConns=d.connections||[];renderFlow();renderConnTable();}).catch(()=>{});
 }
 
-function getFilteredConns() {
-  let fd = document.getElementById('filterDecision').value;
-  let ft = document.getElementById('filterTool').value.toLowerCase();
-  let conns = allConns;
-  if (fd) conns = conns.filter(c => c.decision === fd);
-  if (ft) conns = conns.filter(c => (c.tool||'').toLowerCase().includes(ft));
-  if (selectedSource) conns = conns.filter(c => c.source === selectedSource);
-  if (selectedDest) conns = conns.filter(c => c.destination === selectedDest);
+function getFiltered() {
+  let fd=document.getElementById('filterDecision').value;
+  let conns=allConns;
+  if(fd)conns=conns.filter(c=>c.decision===fd);
+  if(selectedSource)conns=conns.filter(c=>c.source===selectedSource);
+  if(selectedDest)conns=conns.filter(c=>c.destination===selectedDest);
   return conns;
 }
 
-function renderFlowColumns() {
-  let conns = getFilteredConns();
-  let sf = (document.getElementById('srcFilter')?.value || '').toLowerCase();
-  let mf = (document.getElementById('midFilter')?.value || '').toLowerCase();
-  let df = (document.getElementById('dstFilter')?.value || '').toLowerCase();
+function renderFlow() {
+  let conns=getFiltered();
+  let sf=(document.getElementById('srcFilter')?.value||'').toLowerCase();
+  let mf=(document.getElementById('midFilter')?.value||'').toLowerCase();
+  let df=(document.getElementById('dstFilter')?.value||'').toLowerCase();
 
   // Group by source
-  let bySource = {};
-  conns.forEach(c => {
-    let s = c.source || 'unknown';
-    if (dirFilter === 'outbound') return; // inbound column shows sources
-    if (sf && !s.toLowerCase().includes(sf)) return;
-    if (!bySource[s]) bySource[s] = { total: 0, allow: 0, deny: 0, escalate: 0, conns: [] };
-    bySource[s].total++;
-    bySource[s][c.decision] = (bySource[s][c.decision]||0) + 1;
-    bySource[s].conns.push(c);
-  });
-
-  // Group by destination
-  let byDest = {};
-  conns.forEach(c => {
-    let d = c.destination || 'unknown';
-    if (dirFilter === 'inbound') return; // outbound column shows destinations
-    if (df && !d.toLowerCase().includes(df)) return;
-    if (!byDest[d]) byDest[d] = { total: 0, allow: 0, deny: 0, escalate: 0, conns: [] };
-    byDest[d].total++;
-    byDest[d][c.decision] = (byDest[d][c.decision]||0) + 1;
-    byDest[d].conns.push(c);
-  });
-
-  // Group by tool/policy (center column)
-  let byTool = {};
-  conns.forEach(c => {
-    let t = c.tool || 'unknown';
-    let p = c.policy || '';
-    if (mf && !t.toLowerCase().includes(mf) && !(p||'').toLowerCase().includes(mf)) return;
-    if (!byTool[t]) byTool[t] = { total: 0, allow: 0, deny: 0, escalate: 0, policy: p, conns: [] };
-    byTool[t].total++;
-    byTool[t][c.decision] = (byTool[t][c.decision]||0) + 1;
-    byTool[t].conns.push(c);
-  });
+  let bySrc={}; conns.forEach(c=>{let s=c.source||'unknown';if(sf&&!s.toLowerCase().includes(sf))return;if(!bySrc[s])bySrc[s]={t:0,a:0,d:0,e:0};bySrc[s].t++;bySrc[s][c.decision[0]]=(bySrc[s][c.decision[0]]||0)+1;});
+  // Group by tool
+  let byTool={}; conns.forEach(c=>{let t=c.tool||'unknown';let p=c.policy||'';if(mf&&!t.toLowerCase().includes(mf)&&!p.toLowerCase().includes(mf))return;if(!byTool[t])byTool[t]={t:0,a:0,d:0,e:0,p:p};byTool[t].t++;byTool[t][c.decision[0]]=(byTool[t][c.decision[0]]||0)+1;});
+  // Group by dest
+  let byDst={}; conns.forEach(c=>{let d=c.destination||'unknown';if(df&&!d.toLowerCase().includes(df))return;if(!byDst[d])byDst[d]={t:0,a:0,d:0,e:0};byDst[d].t++;byDst[d][c.decision[0]]=(byDst[d][c.decision[0]]||0)+1;});
 
   // Render source column
-  let srcHTML = '';
-  let srcEntries = Object.entries(bySource).sort((a,b) => b[1].total - a[1].total);
-  document.getElementById('srcCount').textContent = srcEntries.length;
-  if (srcEntries.length === 0) {
-    srcHTML = '<div class="flow-empty">No inbound sources</div>';
-  } else {
-    srcEntries.forEach(([name, data]) => {
-      let pct = Math.round(data.allow / data.total * 100);
-      let isActive = selectedSource === name;
-      srcHTML += `<div class="flow-item${isActive?' active':''}" onclick="toggleSource('${esc(name)}')">
-        <div class="flow-item-name">${esc(name)} <span class="direction-badge dir-inbound">in</span></div>
-        <div class="flow-item-meta">${data.total} calls - ${data.allow||0} allow / ${data.deny||0} deny / ${data.escalate||0} escalate</div>
-        <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
-      </div>`;
-    });
-  }
-  document.getElementById('srcList').innerHTML = srcHTML;
+  let srcEntries=Object.entries(bySrc).sort((a,b)=>b[1].t-a[1].t);
+  document.getElementById('srcCount').textContent=srcEntries.length;
+  document.getElementById('srcList').innerHTML=srcEntries.length?srcEntries.map(([n,d])=>{
+    let pct=Math.round(d.a/d.t*100);
+    let dot=d.a>d.d?'dot-allow':d.d>d.a?'dot-deny':'dot-escalate';
+    return `<div class="flow-item${selectedSource===n?' active':''}" id="src-${esc(n)}" onclick="toggleSource('${esc(n)}')">
+      <div class="flow-item-name"><span class="flow-item-dot ${dot}"></span>${esc(n)}</div>
+      <div class="flow-item-meta">${d.t} calls: ${d.a||0}A / ${d.d||0}D / ${d.e||0}E</div>
+      <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
+    </div>`;
+  }).join(''):'<div class="flow-empty">No sources</div>';
 
-  // Render center (gate processing) column
-  let midHTML = '';
-  let midEntries = Object.entries(byTool).sort((a,b) => b[1].total - a[1].total);
-  document.getElementById('midCount').textContent = midEntries.length;
-  if (midEntries.length === 0) {
-    midHTML = '<div class="flow-empty">No gate activity</div>';
-  } else {
-    midEntries.forEach(([name, data]) => {
-      let pct = Math.round(data.allow / data.total * 100);
-      let policy = data.policy ? data.policy.split('/').pop() : '';
-      midHTML += `<div class="flow-item" onclick="filterByTool('${esc(name)}')">
-        <div class="flow-item-name">${esc(name)}</div>
-        <div class="flow-item-meta">${data.total} calls - ${data.allow||0} allow / ${data.deny||0} deny / ${data.escalate||0} escalate</div>
-        ${policy ? `<div class="flow-item-meta">policy: ${esc(policy)}</div>` : ''}
-        <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
-      </div>`;
-    });
-  }
-  document.getElementById('midList').innerHTML = midHTML;
+  // Render center column
+  let midEntries=Object.entries(byTool).sort((a,b)=>b[1].t-a[1].t);
+  document.getElementById('midCount').textContent=midEntries.length;
+  document.getElementById('midList').innerHTML=midEntries.length?midEntries.map(([n,d])=>{
+    let pct=Math.round(d.a/d.t*100);
+    let dot=d.a>d.d?'dot-allow':d.d>d.a?'dot-deny':'dot-escalate';
+    let pol=d.p?d.p.split('/').pop():'';
+    return `<div class="flow-item" id="mid-${esc(n)}" onclick="filterByTool('${esc(n)}')">
+      <div class="flow-item-name"><span class="flow-item-dot ${dot}"></span>${esc(n)}</div>
+      <div class="flow-item-meta">${d.t} calls: ${d.a||0}A / ${d.d||0}D / ${d.e||0}E ${pol?'<span class="protocol-tag">'+esc(pol)+'</span>':''}</div>
+      <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
+    </div>`;
+  }).join(''):'<div class="flow-empty">No gate activity</div>';
 
   // Render destination column
-  let dstHTML = '';
-  let dstEntries = Object.entries(byDest).sort((a,b) => b[1].total - a[1].total);
-  document.getElementById('dstCount').textContent = dstEntries.length;
-  if (dstEntries.length === 0) {
-    dstHTML = '<div class="flow-empty">No outbound destinations</div>';
-  } else {
-    dstEntries.forEach(([name, data]) => {
-      let pct = Math.round(data.allow / data.total * 100);
-      let isActive = selectedDest === name;
-      dstHTML += `<div class="flow-item${isActive?' active':''}" onclick="toggleDest('${esc(name)}')">
-        <div class="flow-item-name">${esc(name)} <span class="direction-badge dir-outbound">out</span></div>
-        <div class="flow-item-meta">${data.total} calls - ${data.allow||0} allow / ${data.deny||0} deny / ${data.escalate||0} escalate</div>
-        <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
-      </div>`;
-    });
-  }
-  document.getElementById('dstList').innerHTML = dstHTML;
+  let dstEntries=Object.entries(byDst).sort((a,b)=>b[1].t-a[1].t);
+  document.getElementById('dstCount').textContent=dstEntries.length;
+  document.getElementById('dstList').innerHTML=dstEntries.length?dstEntries.map(([n,d])=>{
+    let pct=Math.round(d.a/d.t*100);
+    let dot=d.a>d.d?'dot-allow':d.d>d.a?'dot-deny':'dot-escalate';
+    return `<div class="flow-item${selectedDest===n?' active':''}" id="dst-${esc(n)}" onclick="toggleDest('${esc(n)}')">
+      <div class="flow-item-name"><span class="flow-item-dot ${dot}"></span>${esc(n)}</div>
+      <div class="flow-item-meta">${d.t} calls: ${d.a||0}A / ${d.d||0}D / ${d.e||0}E</div>
+      <div class="flow-item-bar"><div class="flow-item-bar-fill" style="width:${pct}%;background:#171717"></div></div>
+    </div>`;
+  }).join(''):'<div class="flow-empty">No destinations</div>';
+
+  // Draw SVG connection lines between columns
+  drawFlowLines(conns);
 }
 
-function toggleSource(name) {
-  selectedSource = selectedSource === name ? null : name;
-  renderFlowColumns();
-  renderConnTable();
+function drawFlowLines(conns) {
+  let svg=document.getElementById('flowSvg');
+  let graph=document.getElementById('flowGraph');
+  let rect=graph.getBoundingClientRect();
+  svg.setAttribute('width',rect.width);
+  svg.setAttribute('height',rect.height);
+  svg.innerHTML='';
+
+  // Build source->tool and tool->dest edge maps
+  let srcToTool={}; conns.forEach(c=>{let s=c.source||'unknown',t=c.tool||'unknown';let k=s+'||'+t;if(!srcToTool[k])srcToTool[k]={count:0,dec:c.decision};srcToTool[k].count++;});
+  let toolToDst={}; conns.forEach(c=>{let t=c.tool||'unknown',d=c.destination||'unknown';let k=t+'||'+d;if(!toolToDst[k])toolToDst[k]={count:0,dec:c.decision};toolToDst[k].count++;});
+
+  function getRightEdge(id){let el=document.getElementById(id);if(!el)return null;let r=el.getBoundingClientRect();return{x:r.right-rect.left,y:r.top+r.height/2-rect.top};}
+  function getLeftEdge(id){let el=document.getElementById(id);if(!el)return null;let r=el.getBoundingClientRect();return{x:r.left-rect.left,y:r.top+r.height/2-rect.top};}
+  function getMidRight(id){let el=document.getElementById('mid-'+id);if(!el)return null;let r=el.getBoundingClientRect();return{x:r.right-rect.left,y:r.top+r.height/2-rect.top};}
+  function getMidLeft(id){let el=document.getElementById('mid-'+id);if(!el)return null;let r=el.getBoundingClientRect();return{x:r.left-rect.left,y:r.top+r.height/2-rect.top};}
+
+  let lineColor={'allow':'#22c55e','deny':'#ef4444','escalate':'#f59e0b'};
+  let ns='http://www.w3.org/2000/svg';
+
+  // Draw source -> tool lines
+  Object.entries(srcToTool).forEach(([k,info])=>{
+    let [s,t]=k.split('||');
+    let src=getRightEdge('src-'+s);
+    let mid=getMidLeft(t);
+    if(src&&mid){
+      let path=document.createElementNS(ns,'path');
+      let cx=(src.x+mid.x)/2;
+      path.setAttribute('d',`M${src.x},${src.y} C${cx},${src.y} ${cx},${mid.y} ${mid.x},${mid.y}`);
+      path.setAttribute('stroke',lineColor[info.dec]||'#d4d4d4');
+      path.setAttribute('stroke-width',Math.min(1+info.count*0.5,4));
+      path.setAttribute('fill','none');
+      path.setAttribute('opacity','0.4');
+      svg.appendChild(path);
+    }
+  });
+
+  // Draw tool -> dest lines
+  Object.entries(toolToDst).forEach(([k,info])=>{
+    let [t,d]=k.split('||');
+    let mid=getMidRight(t);
+    let dst=getLeftEdge('dst-'+d);
+    if(mid&&dst){
+      let path=document.createElementNS(ns,'path');
+      let cx=(mid.x+dst.x)/2;
+      path.setAttribute('d',`M${mid.x},${mid.y} C${cx},${mid.y} ${cx},${dst.y} ${dst.x},${dst.y}`);
+      path.setAttribute('stroke',lineColor[info.dec]||'#d4d4d4');
+      path.setAttribute('stroke-width',Math.min(1+info.count*0.5,4));
+      path.setAttribute('fill','none');
+      path.setAttribute('opacity','0.4');
+      svg.appendChild(path);
+    }
+  });
 }
 
-function toggleDest(name) {
-  selectedDest = selectedDest === name ? null : name;
-  renderFlowColumns();
-  renderConnTable();
-}
-
-function filterByTool(tool) {
-  document.getElementById('filterTool').value = tool;
-  loadConnections();
-}
+function toggleSource(n){selectedSource=selectedSource===n?null:n;renderFlow();renderConnTable();}
+function toggleDest(n){selectedDest=selectedDest===n?null:n;renderFlow();renderConnTable();}
+function filterByTool(t){document.getElementById('midFilter').value=t;renderFlow();renderConnTable();}
 
 function renderConnTable() {
-  let conns = getFilteredConns();
-  let tb = document.getElementById('connBody');
-  tb.innerHTML = '';
-  conns.forEach((c,i) => {
-    let badge = c.decision === 'allow' ? 'badge-allow' : c.decision === 'deny' ? 'badge-deny' : 'badge-escalate';
-    let time = c.timestamp ? c.timestamp.substring(11,19) : '--:--:--';
-    let policy = c.policy ? c.policy.split('/').pop() : '--';
-    tb.innerHTML += `<tr class="conn-row" onclick="selectConn(${i})" data-idx="${i}">
-      <td>${esc(time)}</td><td>${esc(c.source)}</td><td>${esc(c.tool)}</td>
-      <td>${esc(policy)}</td><td><span class="${badge}">${esc(c.decision)}</span></td>
-      <td>${esc(c.destination)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.reason)}</td>
-      <td>${c.latency_us||0}us</td></tr>`;
+  let conns=getFiltered();
+  let tb=document.getElementById('connBody');tb.innerHTML='';
+  conns.forEach((c,i)=>{
+    let badge=c.decision==='allow'?'badge-allow':c.decision==='deny'?'badge-deny':'badge-escalate';
+    let time=c.timestamp?c.timestamp.substring(11,19):'--:--:--';
+    let policy=c.policy?c.policy.split('/').pop():'--';
+    tb.innerHTML+=`<tr class="conn-row" onclick="selectConn(${i})" data-idx="${i}"><td>${esc(time)}</td><td>${esc(c.source)}</td><td>${esc(c.tool)}</td><td>${esc(policy)}</td><td><span class="${badge}">${esc(c.decision)}</span></td><td>${esc(c.destination)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.reason)}</td><td>${c.latency_us||0}us</td></tr>`;
   });
 }
+function selectConn(i){document.querySelectorAll('.conn-row').forEach(r=>r.classList.remove('selected'));let row=document.querySelector(`.conn-row[data-idx="${i}"]`);if(row)row.classList.add('selected');}
 
-function selectConn(idx) {
-  document.querySelectorAll('.conn-row').forEach(r => r.classList.remove('selected'));
-  let row = document.querySelector(`.conn-row[data-idx="${idx}"]`);
-  if (row) row.classList.add('selected');
-}
+function startConnPolling(){stopConnPolling();connPollId=setInterval(()=>{if(document.getElementById('liveMode')?.checked&&!document.getElementById('tab-connections').classList.contains('hidden'))loadConnections();},3000);}
+function stopConnPolling(){if(connPollId){clearInterval(connPollId);connPollId=null;}}
 
-function startConnPolling() {
-  stopConnPolling();
-  connPollId = setInterval(() => {
-    if (document.getElementById('liveMode')?.checked && !document.getElementById('tab-connections').classList.contains('hidden')) { loadConnections(); }
-  }, 3000);
-}
-function stopConnPolling() { if (connPollId) { clearInterval(connPollId); connPollId = null; } }
+let currentFile='';
+function loadPolicy(){api('/api/policies').then(r=>r.json()).then(d=>{let fl=document.getElementById('fileList');fl.innerHTML='';(d.files||[]).forEach(f=>{let chip=document.createElement('div');chip.className='file-chip'+(f.name===currentFile||(!currentFile&&f===d.files[0])?' active':'');chip.textContent=f.name;chip.onclick=()=>{currentFile=f.name;loadPolicyFile(f.path);document.querySelectorAll('.file-chip').forEach(c=>c.classList.remove('active'));chip.classList.add('active');};fl.appendChild(chip);});if(d.content!==undefined)document.getElementById('policyEditor').value=d.content;});}
+function loadPolicyFile(path){api('/api/policies?file='+encodeURIComponent(path)).then(r=>r.json()).then(d=>{document.getElementById('policyEditor').value=d.content||'';});}
+function validatePolicy(){api('/api/policies/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:document.getElementById('policyEditor').value})}).then(r=>r.json()).then(d=>alert(d.valid?'Valid':'Invalid: '+d.error));}
+function savePolicy(){api('/api/policies',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:document.getElementById('policyEditor').value})}).then(r=>r.json()).then(d=>alert('Saved: '+JSON.stringify(d)));}
+function reloadPolicy(){api('/api/policies/reload',{method:'POST'}).then(r=>r.json()).then(d=>alert('Reloaded: '+JSON.stringify(d)));}
+function loadReceipts(){api('/api/receipts?limit=20').then(r=>r.json()).then(d=>{document.getElementById('receiptsView').textContent=JSON.stringify(d.receipts,null,2);});}
+function loadSIEM(){api('/api/siem').then(r=>r.json()).then(d=>{document.getElementById('siemEnabled').checked=d.enabled;document.getElementById('siemBackend').value=d.backend||'';document.getElementById('siemUrl').value=d.url||'';});}
+function saveSIEM(){api('/api/siem',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('siemEnabled').checked,backend:document.getElementById('siemBackend').value,url:document.getElementById('siemUrl').value,token:document.getElementById('siemToken').value})}).then(r=>r.json()).then(d=>alert('Saved'));}
+function loadUsers(){api('/api/users').then(r=>r.json()).then(d=>{let tb=document.getElementById('userTableBody');tb.innerHTML='';d.users.forEach(u=>tb.innerHTML+=`<tr><td>${esc(u.api_key)}</td><td>${esc(u.role)}</td><td>${esc(u.name)}</td></tr>`);});}
+function addUser(){api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('newKey').value,role:document.getElementById('newRole').value,name:document.getElementById('newName').value})}).then(r=>r.json()).then(d=>{alert('Added');loadUsers();});}
+function loadConfig(){api('/api/config').then(r=>r.json()).then(d=>{document.getElementById('configView').textContent=JSON.stringify(d,null,2);});}
 
-// --- POLICIES ---
-let currentFile = '';
-function loadPolicy() {
-  api('/api/policies').then(r=>r.json()).then(d=>{
-    let fl = document.getElementById('fileList');
-    fl.innerHTML = '';
-    (d.files||[]).forEach(f => {
-      let chip = document.createElement('div');
-      chip.className = 'file-chip' + (f.name === currentFile || (!currentFile && f === d.files[0]) ? ' active' : '');
-      chip.textContent = f.name;
-      chip.onclick = () => { currentFile = f.name; loadPolicyFile(f.path); document.querySelectorAll('.file-chip').forEach(c=>c.classList.remove('active')); chip.classList.add('active'); };
-      fl.appendChild(chip);
-    });
-    if (d.content !== undefined) { document.getElementById('policyEditor').value = d.content; }
-  });
-}
-function loadPolicyFile(path) {
-  api('/api/policies?file=' + encodeURIComponent(path)).then(r=>r.json()).then(d=>{ document.getElementById('policyEditor').value = d.content || ''; });
-}
-function validatePolicy() {
-  api('/api/policies/validate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({content:document.getElementById('policyEditor').value})})
-    .then(r=>r.json()).then(d=>alert(d.valid?'Valid':'Invalid: '+d.error));
-}
-function savePolicy() {
-  api('/api/policies',{method:'PUT',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({content:document.getElementById('policyEditor').value})})
-    .then(r=>r.json()).then(d=>alert('Saved: '+JSON.stringify(d)));
-}
-function reloadPolicy() { api('/api/policies/reload',{method:'POST'}).then(r=>r.json()).then(d=>alert('Reloaded: '+JSON.stringify(d))); }
-
-function loadReceipts() { api('/api/receipts?limit=20').then(r=>r.json()).then(d=>{ document.getElementById('receiptsView').textContent=JSON.stringify(d.receipts,null,2); }); }
-function loadSIEM() { api('/api/siem').then(r=>r.json()).then(d=>{ document.getElementById('siemEnabled').checked=d.enabled; document.getElementById('siemBackend').value=d.backend||''; document.getElementById('siemUrl').value=d.url||''; }); }
-function saveSIEM() { api('/api/siem',{method:'PUT',headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:document.getElementById('siemEnabled').checked, backend:document.getElementById('siemBackend').value, url:document.getElementById('siemUrl').value, token:document.getElementById('siemToken').value})}).then(r=>r.json()).then(d=>alert('Saved')); }
-function loadUsers() { api('/api/users').then(r=>r.json()).then(d=>{ let tb=document.getElementById('userTableBody');tb.innerHTML=''; d.users.forEach(u=>tb.innerHTML+=`<tr><td>${esc(u.api_key)}</td><td>${esc(u.role)}</td><td>${esc(u.name)}</td></tr>`); }); }
-function addUser() { api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'}, body:JSON.stringify({api_key:document.getElementById('newKey').value, role:document.getElementById('newRole').value, name:document.getElementById('newName').value})}).then(r=>r.json()).then(d=>{alert('Added');loadUsers();}); }
-function loadConfig() { api('/api/config').then(r=>r.json()).then(d=>{ document.getElementById('configView').textContent=JSON.stringify(d,null,2); }); }
-
-setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden') && !document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);
+setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden')&&!document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);
+window.addEventListener('resize',()=>{if(!document.getElementById('tab-connections').classList.contains('hidden'))drawFlowLines(getFiltered());});
 </script>
 </body>
 </html>"""

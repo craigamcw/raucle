@@ -367,6 +367,10 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
     def admin_panel() -> str:
         return ADMIN_PANEL_HTML
 
+    @app.get("/topology", response_class=HTMLResponse)
+    def topology_view() -> str:
+        return TOPOLOGY_HTML
+
     return app
 
 
@@ -492,6 +496,7 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
     <div class="tab" onclick="showTab('siem',this)">SIEM</div>
     <div class="tab" onclick="showTab('users',this)">Users</div>
     <div class="tab" onclick="showTab('config',this)">Config</div>
+    <div class="tab" onclick="window.location.href='/topology'" style="color:var(--active-green)">Topology</div>
   </div>
   <div class="content">
 
@@ -765,6 +770,527 @@ function loadConfig(){api('/api/config').then(r=>r.json()).then(d=>{document.get
 
 setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden')&&!document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);
 window.addEventListener('resize',()=>{if(!document.getElementById('tab-connections').classList.contains('hidden'))drawFlowLines(getFiltered());});
+</script>
+</body>
+</html>"""
+
+
+TOPOLOGY_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raucle Gateway - Traffic Topology</title>
+<style>
+:root {
+  --bg: #101114;
+  --surface: rgba(30,33,39,0.92);
+  --surface-hover: rgba(43,47,55,0.98);
+  --border: rgba(255,255,255,0.12);
+  --text-primary: #f2f4f7;
+  --text-secondary: #8e969f;
+  --active-green: #39d49a;
+  --active-cyan: #45cbd8;
+  --warning: #e5b85c;
+  --blocked: #dd6b78;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text-primary);overflow:hidden}
+.topology-canvas{
+  position:relative;width:100%;height:calc(100vh - 48px);
+  background-color:var(--bg);
+  background-image:radial-gradient(rgba(255,255,255,0.10) 1px,transparent 1px);
+  background-size:24px 24px;
+  overflow:hidden;cursor:grab;
+}
+.topology-canvas:active{cursor:grabbing}
+.topology-svg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.topology-content{position:absolute;top:0;left:0;width:100%;height:100%;z-index:2;transform-origin:0 0}
+.node-card{
+  position:absolute;width:180px;padding:12px 14px;border-radius:10px;
+  background:var(--surface);border:1px solid var(--border);
+  box-shadow:0 4px 12px rgba(0,0,0,0.3);cursor:pointer;
+  transition:opacity 0.3s,background 0.2s,transform 0.2s,border-color 0.2s;
+  backdrop-filter:blur(8px);user-select:none;
+}
+.node-card:hover{background:var(--surface-hover);border-color:rgba(255,255,255,0.2);transform:translateY(-1px)}
+.node-card.selected{border-color:var(--active-green);box-shadow:0 0 0 2px rgba(57,212,154,0.3),0 4px 12px rgba(0,0,0,0.4)}
+.node-card.dimmed{opacity:0.2}
+.node-card.inactive{opacity:0.4}
+.node-header{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.node-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;animation:pulse-dot 2s infinite}
+.node-dot.active{background:var(--active-green);box-shadow:0 0 8px var(--active-green)}
+.node-dot.warning{background:var(--warning);box-shadow:0 0 8px var(--warning)}
+.node-dot.inactive{background:var(--text-secondary);animation:none;box-shadow:none}
+.node-dot.blocked{background:var(--blocked);box-shadow:0 0 8px var(--blocked)}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.5}}
+.node-label{font-size:13px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node-subtitle{font-size:11px;color:var(--text-secondary);margin-top:2px;font-family:ui-monospace,monospace}
+.node-badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,0.1);color:var(--text-secondary);margin-top:4px}
+.node-type-source .node-dot{background:var(--active-cyan);box-shadow:0 0 8px var(--active-cyan)}
+.node-type-destination .node-dot{background:var(--active-green);box-shadow:0 0 8px var(--active-green)}
+
+.edge-label{
+  position:absolute;font-size:10px;padding:2px 8px;border-radius:4px;
+  background:var(--surface);border:1px solid var(--border);color:var(--text-secondary);
+  font-family:ui-monospace,monospace;pointer-events:none;transform:translate(-50%,-50%);
+  white-space:nowrap;transition:opacity 0.3s;z-index:3;
+}
+.edge-label.dimmed{opacity:0.15}
+
+.topology-header{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;border-bottom:1px solid var(--border);background:var(--bg);position:relative;z-index:10}
+.topology-title{display:flex;align-items:center;gap:12px}
+.topology-title h1{font-size:16px;font-weight:600;letter-spacing:-0.025em}
+.topology-controls{display:flex;gap:8px;align-items:center}
+.topo-btn{background:var(--surface);border:1px solid var(--border);color:var(--text-primary);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit;transition:background 0.2s}
+.topo-btn:hover{background:var(--surface-hover)}
+.topo-btn.active{border-color:var(--active-green);color:var(--active-green)}
+.filter-select{background:var(--surface);border:1px solid var(--border);color:var(--text-primary);padding:6px 12px;border-radius:8px;font-size:13px;font-family:inherit;outline:none}
+
+.details-panel{position:absolute;top:48px;right:0;width:340px;height:calc(100vh - 48px);background:var(--surface);border-left:1px solid var(--border);padding:20px;overflow-y:auto;transform:translateX(100%);transition:transform 0.3s;z-index:20;backdrop-filter:blur(12px)}
+.details-panel.open{transform:translateX(0)}
+.details-panel h2{font-size:15px;font-weight:600;margin-bottom:12px;color:var(--text-primary)}
+.details-panel .detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)}
+.detail-label{color:var(--text-secondary);font-size:12px}
+.detail-value{color:var(--text-primary);font-size:12px;font-family:ui-monospace,monospace}
+.detail-status{display:inline-flex;align-items:center;gap:6px}
+.close-btn{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--text-secondary);font-size:20px;cursor:pointer}
+.live-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--active-green);margin-right:6px;animation:pulse-dot 2s infinite}
+</style>
+</head>
+<body>
+<div class="topology-header">
+  <div class="topology-title">
+    <h1>Raucle Gateway</h1>
+    <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,0.08);color:var(--text-secondary)">Topology</span>
+  </div>
+  <div class="topology-controls">
+    <span><span class="live-indicator"></span>Live</span>
+    <select class="filter-select" id="decisionFilter" onchange="updateData()">
+      <option value="">All Decisions</option>
+      <option value="allow">Allow</option>
+      <option value="deny">Deny</option>
+      <option value="escalate">Escalate</option>
+    </select>
+    <button class="topo-btn" onclick="fitView()">Fit View</button>
+    <button class="topo-btn" id="motionBtn" onclick="toggleMotion()">Motion: On</button>
+  </div>
+</div>
+<div class="topology-canvas" id="canvas">
+  <svg class="topology-svg" id="svg"></svg>
+  <div class="topology-content" id="content"></div>
+</div>
+<div class="details-panel" id="detailsPanel">
+  <button class="close-btn" onclick="closeDetails()">&times;</button>
+  <h2 id="detailTitle"></h2>
+  <div id="detailBody"></div>
+</div>
+
+<script>
+// === DATA MODEL ===
+let topologyNodes = [];
+let topologyEdges = [];
+let selectedNode = null;
+let selectedEdge = null;
+let motionEnabled = true;
+let allConns = [];
+let apiKey = '';
+let pollId = null;
+
+// === LAYOUT (deterministic three-column) ===
+const COL_X = { source: 80, policy: 420, destination: 760 };
+const NODE_H = 64;
+const NODE_GAP = 24;
+
+function layoutNodes(nodes) {
+  const cols = { source: [], policy: [], destination: [] };
+  nodes.forEach(n => cols[n.type]?.push(n));
+  const positions = {};
+  ['source','policy','destination'].forEach(type => {
+    const colNodes = cols[type];
+    const totalH = colNodes.length * (NODE_H + NODE_GAP) - NODE_GAP;
+    let y = Math.max(40, (window.innerHeight - 48 - totalH) / 2);
+    colNodes.forEach(n => {
+      positions[n.id] = { x: COL_X[type], y };
+      y += NODE_H + NODE_GAP;
+    });
+  });
+  return positions;
+}
+
+// === SVG EDGE PATHS ===
+function edgePath(src, dst) {
+  const sx = src.x + 180, sy = src.y + NODE_H / 2;
+  const dx = dst.x, dy = dst.y + NODE_H / 2;
+  const cx = (sx + dx) / 2;
+  return `M${sx},${sy} C${cx},${sy} ${cx},${dy} ${dx},${dy}`;
+}
+
+function getEdgeColor(decision) {
+  if (decision === 'allow') return '#39d49a';
+  if (decision === 'deny') return '#dd6b78';
+  if (decision === 'escalate') return '#e5b85c';
+  return '#45cbd8';
+}
+
+// === RENDER ===
+function render() {
+  const positions = layoutNodes(topologyNodes);
+  const svg = document.getElementById('svg');
+  const content = document.getElementById('content');
+  svg.innerHTML = '';
+  content.innerHTML = '';
+
+  // Determine connected nodes for selection dimming
+  let connectedIds = new Set();
+  if (selectedNode) {
+    connectedIds.add(selectedNode);
+    topologyEdges.forEach(e => {
+      if (e.source === selectedNode) connectedIds.add(e.target);
+      if (e.target === selectedNode) connectedIds.add(e.source);
+    });
+  }
+
+  // Draw edges
+  topologyEdges.forEach(edge => {
+    const src = topologyNodes.find(n => n.id === edge.source);
+    const dst = topologyNodes.find(n => n.id === edge.target);
+    if (!src || !dst) return;
+    const sp = positions[src.id], dp = positions[dst.id];
+    if (!sp || !dp) return;
+
+    const color = edge.colour || getEdgeColor(edge.status);
+    const isDimmed = selectedNode && !connectedIds.has(edge.source) && !connectedIds.has(edge.target);
+    const opacity = isDimmed ? '0.1' : '0.5';
+
+    // Base path (faint)
+    const pathId = `path-${edge.id}`;
+    const d = edgePath(sp, dp);
+    const baseLine = document.createElementNS('http://www.w3.org/2000/svg','path');
+    baseLine.setAttribute('d', d);
+    baseLine.setAttribute('stroke', color);
+    baseLine.setAttribute('stroke-width', '1.5');
+    baseLine.setAttribute('fill', 'none');
+    baseLine.setAttribute('opacity', opacity);
+    svg.appendChild(baseLine);
+
+    // Visible path (for hit testing and motion reference)
+    const visPath = document.createElementNS('http://www.w3.org/2000/svg','path');
+    visPath.setAttribute('d', d);
+    visPath.setAttribute('id', pathId);
+    visPath.setAttribute('stroke', 'transparent');
+    visPath.setAttribute('stroke-width', '20');
+    visPath.setAttribute('fill', 'none');
+    visPath.setAttribute('style', 'pointer-events:stroke;cursor:pointer');
+    visPath.addEventListener('click', () => selectEdge(edge));
+    svg.appendChild(visPath);
+
+    // Animated particles
+    if (motionEnabled && !isDimmed) {
+      const count = edge.particleCount || 2;
+      const speed = edge.animationSpeed || 1;
+      for (let i = 0; i < count; i++) {
+        const particle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        particle.setAttribute('r', '3');
+        particle.setAttribute('fill', color);
+        particle.setAttribute('opacity', '0.9');
+        particle.style.filter = `drop-shadow(0 0 4px ${color})`;
+
+        const anim = document.createElementNS('http://www.w3.org/2000/svg','animateMotion');
+        anim.setAttribute('dur', `${3 / speed}s`);
+        anim.setAttribute('repeatCount', 'indefinite');
+        anim.setAttribute('begin', `${(i / count) * (3 / speed)}s`);
+        anim.setAttribute('path', d);
+        particle.appendChild(anim);
+        svg.appendChild(particle);
+      }
+    }
+
+    // Edge label (protocol/ports)
+    if (edge.label) {
+      const mx = (sp.x + 180 + dp.x) / 2;
+      const my = (sp.y + NODE_H/2 + dp.y + NODE_H/2) / 2;
+      const labelEl = document.createElement('div');
+      labelEl.className = 'edge-label' + (isDimmed ? ' dimmed' : '');
+      labelEl.style.left = mx + 'px';
+      labelEl.style.top = my + 'px';
+      labelEl.textContent = edge.label;
+      labelEl.dataset.edgeId = edge.id;
+      labelEl.addEventListener('click', () => selectEdge(edge));
+      labelEl.style.pointerEvents = 'auto';
+      labelEl.style.cursor = 'pointer';
+      content.appendChild(labelEl);
+    }
+  });
+
+  // Draw nodes
+  topologyNodes.forEach(node => {
+    const pos = positions[node.id];
+    if (!pos) return;
+    const isDimmed = selectedNode && !connectedIds.has(node.id);
+    const isSelected = selectedNode === node.id;
+
+    const card = document.createElement('div');
+    card.className = `node-card node-type-${node.type}` + (isSelected ? ' selected' : '') + (isDimmed ? ' dimmed' : '') + (node.status === 'inactive' ? ' inactive' : '');
+    card.style.left = pos.x + 'px';
+    card.style.top = pos.y + 'px';
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `${node.type}: ${node.label}`);
+
+    const statusClass = node.status === 'active' ? 'active' : node.status === 'warning' ? 'warning' : node.status === 'blocked' ? 'blocked' : 'inactive';
+    card.innerHTML = `
+      <div class="node-header">
+        <div class="node-dot ${statusClass}"></div>
+        <div class="node-label">${esc(node.label)}</div>
+      </div>
+      ${node.subtitle ? `<div class="node-subtitle">${esc(node.subtitle)}</div>` : ''}
+      ${node.badge ? `<div class="node-badge">${esc(node.badge)}</div>` : ''}
+    `;
+    card.addEventListener('click', () => selectNode(node));
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter') selectNode(node); });
+    content.appendChild(card);
+  });
+}
+
+function esc(s) { return s ? s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : ''; }
+
+// === SELECTION ===
+function selectNode(node) {
+  if (selectedNode === node.id) {
+    selectedNode = null;
+    closeDetails();
+  } else {
+    selectedNode = node.id;
+    showNodeDetails(node);
+  }
+  render();
+}
+
+function selectEdge(edge) {
+  selectedEdge = edge;
+  showEdgeDetails(edge);
+}
+
+function showNodeDetails(node) {
+  const panel = document.getElementById('detailsPanel');
+  document.getElementById('detailTitle').textContent = node.label;
+  let html = '';
+  if (node.subtitle) html += `<div class="detail-row"><span class="detail-label">Address</span><span class="detail-value">${esc(node.subtitle)}</span></div>`;
+  html += `<div class="detail-row"><span class="detail-label">Type</span><span class="detail-value">${node.type}</span></div>`;
+  html += `<div class="detail-row"><span class="detail-label">Status</span><span class="detail-status"><span class="node-dot ${node.status||'inactive'}"></span>${node.status || 'unknown'}</span></div>`;
+  if (node.metadata) {
+    Object.entries(node.metadata).forEach(([k,v]) => {
+      html += `<div class="detail-row"><span class="detail-label">${esc(k)}</span><span class="detail-value">${esc(String(v))}</span></div>`;
+    });
+  }
+  // Show connected edges
+  const conns = topologyEdges.filter(e => e.source === node.id || e.target === node.id);
+  if (conns.length) {
+    html += `<div style="margin-top:16px;font-size:13px;font-weight:600;color:var(--text-primary)">Connections (${conns.length})</div>`;
+    conns.forEach(e => {
+      const other = e.source === node.id ? e.target : e.source;
+      const otherNode = topologyNodes.find(n => n.id === other);
+      html += `<div class="detail-row"><span class="detail-label">${esc(otherNode?.label || other)}</span><span class="detail-value" style="color:${e.colour||getEdgeColor(e.status)}">${e.label || e.status}</span></div>`;
+    });
+  }
+  document.getElementById('detailBody').innerHTML = html;
+  panel.classList.add('open');
+}
+
+function showEdgeDetails(edge) {
+  const panel = document.getElementById('detailsPanel');
+  document.getElementById('detailTitle').textContent = edge.label || 'Connection';
+  const srcNode = topologyNodes.find(n => n.id === edge.source);
+  const dstNode = topologyNodes.find(n => n.id === edge.target);
+  let html = '';
+  html += `<div class="detail-row"><span class="detail-label">From</span><span class="detail-value">${esc(srcNode?.label || edge.source)}</span></div>`;
+  html += `<div class="detail-row"><span class="detail-label">To</span><span class="detail-value">${esc(dstNode?.label || edge.target)}</span></div>`;
+  if (edge.protocol) html += `<div class="detail-row"><span class="detail-label">Protocol</span><span class="detail-value">${edge.protocol.toUpperCase()}</span></div>`;
+  if (edge.ports) html += `<div class="detail-row"><span class="detail-label">Ports</span><span class="detail-value">${edge.ports}</span></div>`;
+  html += `<div class="detail-row"><span class="detail-label">Status</span><span class="detail-status"><span class="node-dot ${edge.status==='active'?'active':'blocked'}"></span>${edge.status || 'unknown'}</span></div>`;
+  if (edge.trafficRate !== undefined) html += `<div class="detail-row"><span class="detail-label">Traffic Rate</span><span class="detail-value">${edge.trafficRate}/s</span></div>`;
+  if (edge.metadata) {
+    Object.entries(edge.metadata).forEach(([k,v]) => {
+      html += `<div class="detail-row"><span class="detail-label">${esc(k)}</span><span class="detail-value">${esc(String(v))}</span></div>`;
+    });
+  }
+  document.getElementById('detailBody').innerHTML = html;
+  panel.classList.add('open');
+}
+
+function closeDetails() {
+  document.getElementById('detailsPanel').classList.remove('open');
+  selectedNode = null;
+  selectedEdge = null;
+  render();
+}
+
+// === PAN & ZOOM ===
+let scale = 1, panX = 0, panY = 0, isDragging = false, dragStartX = 0, dragStartY = 0;
+const canvas = document.getElementById('canvas');
+const content = document.getElementById('content');
+const svg = document.getElementById('svg');
+
+function applyTransform() {
+  content.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+  svg.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (e.target.classList.contains('node-card') || e.target.classList.contains('edge-label')) return;
+  isDragging = true;
+  dragStartX = e.clientX - panX;
+  dragStartY = e.clientY - panY;
+});
+canvas.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  panX = e.clientX - dragStartX;
+  panY = e.clientY - dragStartY;
+  applyTransform();
+});
+canvas.addEventListener('mouseup', () => isDragging = false);
+canvas.addEventListener('mouseleave', () => isDragging = false);
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  panX = mx - (mx - panX) * delta;
+  panY = my - (my - panY) * delta;
+  scale = Math.max(0.3, Math.min(3, scale * delta));
+  applyTransform();
+}, { passive: false });
+
+function fitView() {
+  if (!topologyNodes.length) return;
+  const positions = layoutNodes(topologyNodes);
+  const maxX = Math.max(...Object.values(positions).map(p => p.x + 180));
+  const maxY = Math.max(...Object.values(positions).map(p => p.y + NODE_H));
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  scale = Math.min(w / (maxX + 40), h / (maxY + 40), 1.2);
+  panX = (w - maxX * scale) / 2;
+  panY = 20;
+  applyTransform();
+}
+
+// === MOTION ===
+function toggleMotion() {
+  motionEnabled = !motionEnabled;
+  document.getElementById('motionBtn').textContent = `Motion: ${motionEnabled ? 'On' : 'Off'}`;
+  render();
+}
+
+// Check prefers-reduced-motion
+if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  motionEnabled = false;
+}
+
+// === DATA: Load from gateway API ===
+function updateData() {
+  // Try to fetch from gateway API
+  fetch('/api/connections?limit=500', {
+    headers: { Authorization: apiKey || 'test-key' }
+  }).then(r => r.json()).then(d => {
+    allConns = d.connections || [];
+    buildTopology(allConns);
+  }).catch(() => {
+    // Fallback to sample data
+    buildTopology([]);
+  });
+}
+
+function buildTopology(conns) {
+  if (!conns.length) {
+    // Sample topology from the spec
+    topologyNodes = [
+      { id: 'client', type: 'source', label: 'Workstation', subtitle: '100.64.17.61', status: 'active' },
+      { id: 'policy-infra', type: 'policy', label: 'workstation-to-infra', subtitle: 'TCP:22,443,8006', status: 'active' },
+      { id: 'policy-dns', type: 'policy', label: 'workstation-to-dns', subtitle: 'UDP:53', status: 'active' },
+      { id: 'infra', type: 'destination', label: 'Infrastructure', subtitle: '5 resources', status: 'active' },
+      { id: 'dns', type: 'destination', label: 'DNS Server', subtitle: '1 resource', status: 'active' },
+    ];
+    topologyEdges = [
+      { id: 'e1', source: 'client', target: 'policy-infra', status: 'active', colour: '#35d6a0', animationSpeed: 1, particleCount: 2 },
+      { id: 'e2', source: 'policy-infra', target: 'infra', label: 'TCP:22,443,8006', protocol: 'tcp', ports: '22,443,8006', status: 'active', colour: '#35d6a0', animationSpeed: 1.2, particleCount: 2 },
+      { id: 'e3', source: 'client', target: 'policy-dns', status: 'active', colour: '#48c8d8', animationSpeed: 0.8, particleCount: 1 },
+      { id: 'e4', source: 'policy-dns', target: 'dns', label: 'UDP:53', protocol: 'udp', ports: '53', status: 'active', colour: '#48c8d8', animationSpeed: 0.8, particleCount: 1 },
+    ];
+    render();
+    fitView();
+    return;
+  }
+
+  // Build topology from real connections
+  const filter = document.getElementById('decisionFilter')?.value;
+  let filtered = conns;
+  if (filter) filtered = filtered.filter(c => c.decision === filter);
+
+  const bySrc = {}, byTool = {}, byDst = {};
+  filtered.forEach(c => {
+    const s = c.source || 'unknown';
+    const t = c.tool || 'unknown';
+    const d = c.destination || 'unknown';
+    if (!bySrc[s]) bySrc[s] = { count: 0, allow: 0, deny: 0, escalate: 0 };
+    bySrc[s].count++; bySrc[s][c.decision] = (bySrc[s][c.decision] || 0) + 1;
+    if (!byTool[t]) byTool[t] = { count: 0, allow: 0, deny: 0, escalate: 0, policy: c.policy || '' };
+    byTool[t].count++; byTool[t][c.decision] = (byTool[t][c.decision] || 0) + 1;
+    if (!byDst[d]) byDst[d] = { count: 0, allow: 0, deny: 0, escalate: 0 };
+    byDst[d].count++; byDst[d][c.decision] = (byDst[d][c.decision] || 0) + 1;
+  });
+
+  const nodes = [];
+  const edges = [];
+
+  Object.entries(bySrc).forEach(([name, d]) => {
+    const status = d.deny > d.allow ? 'blocked' : d.escalate > 0 ? 'warning' : 'active';
+    nodes.push({ id: `src-${name}`, type: 'source', label: name, subtitle: `${d.count} calls`, status, metadata: { allow: d.allow, deny: d.deny, escalate: d.escalate } });
+  });
+  Object.entries(byTool).forEach(([name, d]) => {
+    const status = d.deny > d.allow ? 'blocked' : d.escalate > 0 ? 'warning' : 'active';
+    const policy = d.policy ? d.policy.split('/').pop() : '';
+    nodes.push({ id: `tool-${name}`, type: 'policy', label: name, subtitle: policy, badge: `${d.count} calls`, status, metadata: { allow: d.allow, deny: d.deny, escalate: d.escalate, policy } });
+  });
+  Object.entries(byDst).forEach(([name, d]) => {
+    const status = d.deny > d.allow ? 'blocked' : d.escalate > 0 ? 'warning' : 'active';
+    nodes.push({ id: `dst-${name}`, type: 'destination', label: name, subtitle: `${d.count} calls`, status, metadata: { allow: d.allow, deny: d.deny, escalate: d.escalate } });
+  });
+
+  // Build edges: source -> tool -> destination
+  filtered.forEach((c, i) => {
+    const sId = `src-${c.source || 'unknown'}`;
+    const tId = `tool-${c.tool || 'unknown'}`;
+    const dId = `dst-${c.destination || 'unknown'}`;
+    const colour = getEdgeColor(c.decision);
+    edges.push({ id: `e-s2t-${i}`, source: sId, target: tId, status: c.decision, colour, animationSpeed: c.decision === 'deny' ? 0.5 : 1, particleCount: 1 });
+    edges.push({ id: `e-t2d-${i}`, source: tId, target: dId, label: c.policy ? c.policy.split('/').pop() : '', status: c.decision, colour, animationSpeed: c.decision === 'deny' ? 0.5 : 1.2, particleCount: 1, metadata: { decision: c.decision, reason: c.reason, latency_us: c.latency_us } });
+  });
+
+  // Deduplicate edges by (source,target) pair keeping the most recent
+  const edgeMap = {};
+  edges.forEach(e => {
+    const key = `${e.source}|${e.target}`;
+    if (!edgeMap[key]) edgeMap[key] = e;
+  });
+  topologyNodes = nodes;
+  topologyEdges = Object.values(edgeMap);
+  render();
+  fitView();
+}
+
+// === POLLING ===
+function startPolling() {
+  if (pollId) clearInterval(pollId);
+  pollId = setInterval(() => {
+    if (!document.hidden) updateData();
+  }, 5000);
+}
+
+// === INIT ===
+updateData();
+startPolling();
+window.addEventListener('resize', () => { render(); fitView(); });
 </script>
 </body>
 </html>"""

@@ -291,7 +291,9 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
                 content = ""
             return {"content": content, "files": file_list, "mode": "dir", "path": str(pdir)}
         else:
-            policy_path = Path(gateway.config.policy_file)
+            from raucle._paths import validate_path
+
+            policy_path = validate_path(gateway.config.policy_file, must_exist=False)
             content = policy_path.read_text() if policy_path.exists() else ""
             return {
                 "content": content,
@@ -365,7 +367,9 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
     def get_receipts(limit: int = 50, authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "receipts")
-        path = Path(gateway.config.receipt_store)
+        from raucle._paths import validate_path
+
+        path = validate_path(gateway.config.receipt_store, must_exist=False)
         if not path.exists():
             return {"receipts": [], "count": 0}
         lines = path.read_text(encoding="utf-8").strip().splitlines()

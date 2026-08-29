@@ -112,6 +112,9 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # Test files use pytest.importorskip before imports — E402 is unavoidable
 "tests/*.py" = ["E402"]
+# gateway_app.py embeds large HTML/JS admin-panel constants (single-line
+# JS, long SVG paths). Line-length limits do not apply to embedded markup.
+"raucle/gateway_app.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

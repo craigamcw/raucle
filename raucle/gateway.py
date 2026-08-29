@@ -103,10 +103,10 @@ class GatewayConfig:
             policy_dir=os.environ.get("RAUCLE_POLICY_DIR", ""),
             receipt_store=os.environ.get("RAUCLE_RECEIPT_STORE", "/data/receipts.jsonl"),
             audit_chain=os.environ.get("RAUCLE_AUDIT_CHAIN", "/data/audit.jsonl"),
-            siem_enabled=os.environ.get("RAUCLE_Siem_ENABLED", "").lower() in ("1", "true", "yes"),
-            siem_backend=os.environ.get("RAUCLE_Siem_BACKEND", ""),
-            siem_url=os.environ.get("RAUCLE_Siem_URL", ""),
-            siem_token=os.environ.get("RAUCLE_Siem_TOKEN", ""),
+            siem_enabled=os.environ.get("RAUCLE_SIEM_ENABLED", "").lower() in ("1", "true", "yes"),
+            siem_backend=os.environ.get("RAUCLE_SIEM_BACKEND", ""),
+            siem_url=os.environ.get("RAUCLE_SIEM_URL", ""),
+            siem_token=os.environ.get("RAUCLE_SIEM_TOKEN", ""),
             audit_persist=os.environ.get("RAUCLE_AUDIT_PERSIST", "").lower()
             in ("1", "true", "yes"),
             audit_log_file=os.environ.get("RAUCLE_AUDIT_LOG", "/data/gateway-audit.jsonl"),
@@ -124,7 +124,7 @@ class GatewayConfig:
     def to_yaml(self) -> str:
         """Serialise config to YAML for editing."""
         data = {}
-        for k, v in self.__dataclass_fields__.items():
+        for k in self.__dataclass_fields__:
             val = getattr(self, k)
             # Skip secrets and non-serialisable fields
             if k in ("admin_api_key", "siem_token", "config_file"):

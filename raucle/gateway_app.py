@@ -318,11 +318,11 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         lines = path.read_text(encoding="utf-8").strip().splitlines()
         recent = lines[-limit:] if len(lines) > limit else lines
         receipts = []
+        import contextlib
+
         for line in recent:
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 receipts.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
         return {"receipts": receipts, "count": len(receipts), "total": len(lines)}
 
     # --- SIEM Config ---

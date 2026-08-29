@@ -230,4 +230,4 @@ class TestEndToEndWithKMS:
             agent_id="agent:production",
             args={"from_account": "ACC-001", "to_account": "ACC-999", "amount": 100},
         )
-        assert not d2.allowed
+        assert not d3.allowed

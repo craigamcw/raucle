@@ -8,7 +8,6 @@ This module provides:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -146,6 +145,26 @@ def create_gateway_app(gateway: RaucleGateway) -> FastAPI:
 # ---------------------------------------------------------------------------
 
 
+def _validate_policy_content(content: str) -> dict[str, Any]:
+    """Parse and validate policy YAML content.
+
+    Returns ``{"valid": True}`` when the content is a well-formed policy
+    document, ``{"valid": False, "error": ...}`` otherwise. Used as the
+    sanitiser for user-supplied policy content before it is written to
+    disk (taint-flow break for S2083).
+    """
+    try:
+        import yaml
+
+        from raucle.policy import PolicyFile
+
+        data = yaml.safe_load(content)
+        PolicyFile.from_dict(data)
+        return {"valid": True}
+    except Exception as exc:
+        return {"valid": False, "error": str(exc)}
+
+
 def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
     """Create the admin panel app (operator-facing)."""
     app = FastAPI(
@@ -263,10 +282,12 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         authorization: str | None = Header(None),
     ) -> dict[str, Any]:
         """Get policy file content. If policy_dir is set, list all files."""
+        from raucle._paths import validate_path
+
         user = check_auth(authorization)
         check_access(user, "policies")
         if gateway.config.policy_dir:
-            pdir = Path(gateway.config.policy_dir)
+            pdir = validate_path(gateway.config.policy_dir, must_exist=False)
             if not pdir.is_dir():
                 return {"content": "", "files": [], "mode": "dir", "path": str(pdir)}
             files = sorted(pdir.glob("*.yaml"))
@@ -316,6 +337,14 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         check_access(user, "policies")
         from raucle._paths import validate_path
 
+        # SECURITY: validate user-supplied YAML before writing to disk.
+        # Rejects malformed content, breaking the request-to-disk taint flow.
+        check = _validate_policy_content(req.content)
+        if not check.get("valid"):
+            raise HTTPException(
+                400, f"Invalid policy content: {check.get('error', 'parse failure')}"
+            )
+
         policy_path = validate_path(gateway.config.policy_file, must_exist=False)
         policy_path.write_text(req.content, encoding="utf-8")
         result = gateway.reload_policies()
@@ -345,16 +374,7 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
     ) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "policies")
-        try:
-            import yaml
-
-            from raucle.policy import PolicyFile
-
-            data = yaml.safe_load(req.content)
-            PolicyFile.from_dict(data)
-            return {"valid": True}
-        except Exception as exc:
-            return {"valid": False, "error": str(exc)}
+        return _validate_policy_content(req.content)
 
     # --- Receipts ---
     @app.get(

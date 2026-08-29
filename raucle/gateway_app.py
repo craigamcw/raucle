@@ -21,6 +21,8 @@ from raucle.gateway import (
     UserManager,
 )
 
+_BEARER_PREFIX = "Bearer "
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -128,8 +130,8 @@ def create_gateway_app(gateway: RaucleGateway) -> FastAPI:
     def health(authorization: str | None = Header(None)) -> dict[str, str]:
         if gateway.config.health_check_token:
             key = authorization or ""
-            if key.startswith("Bearer "):
-                key = key[7:]
+            if key.startswith(_BEARER_PREFIX):
+                key = key[len(_BEARER_PREFIX) :]
             import hmac as _hmac
 
             if not _hmac.compare_digest(key, gateway.config.health_check_token):
@@ -161,8 +163,8 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             raise HTTPException(status_code=401, detail="Missing Authorization header")
         # Accept "Bearer <key>" or just "<key>"
         key = authorization
-        if key.startswith("Bearer "):
-            key = key[7:]
+        if key.startswith(_BEARER_PREFIX):
+            key = key[len(_BEARER_PREFIX) :]
         user = users.get_user(key)
         if user is None:
             raise HTTPException(status_code=403, detail="Invalid API key")
@@ -191,8 +193,8 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
     def admin_health(authorization: str | None = Header(None)) -> dict[str, str]:
         if gateway.config.health_check_token:
             key = authorization or ""
-            if key.startswith("Bearer "):
-                key = key[7:]
+            if key.startswith(_BEARER_PREFIX):
+                key = key[len(_BEARER_PREFIX) :]
             import hmac as _hmac
 
             if not _hmac.compare_digest(key, gateway.config.health_check_token):
@@ -200,14 +202,26 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         return {"status": "ok"}
 
     # --- Dashboard / Stats ---
-    @app.get("/api/stats")
+    @app.get(
+        "/api/stats",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def get_stats(authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "stats")
         return gateway.get_stats()
 
     # --- Connections (live flow log) ---
-    @app.get("/api/connections")
+    @app.get(
+        "/api/connections",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def get_connections(
         limit: int = 100,
         tool: str = "",
@@ -236,7 +250,14 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         return {"connections": connections[:limit], "count": len(connections)}
 
     # --- Policy Management ---
-    @app.get("/api/policies")
+    @app.get(
+        "/api/policies",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+            "404": {"description": "File not found"},
+        },
+    )
     def get_policies(
         file: str = "",
         authorization: str | None = Header(None),
@@ -251,12 +272,18 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             files = sorted(pdir.glob("*.yaml"))
             file_list = [{"name": f.name, "path": str(f), "size": f.stat().st_size} for f in files]
             if file:
-                # SECURITY: restrict file access to the policy directory only
-                target = Path(file).resolve()
+                # SECURITY: restrict file access to the policy directory only.
+                # Resolve via validate_path, then confine to the policy dir.
+                from raucle._paths import validate_path
+
+                try:
+                    target = validate_path(file, must_exist=False)
+                except ValueError:
+                    raise HTTPException(404, "File not found") from None
                 if not str(target).startswith(str(pdir.resolve())):
                     raise HTTPException(403, "Access denied: file outside policy directory")
                 if not target.is_file():
-                    raise HTTPException(404, f"File not found: {Path(file).name}")
+                    raise HTTPException(404, "File not found")
                 content = target.read_text(encoding="utf-8")
             elif files:
                 content = files[0].read_text(encoding="utf-8")
@@ -273,24 +300,44 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
                 "path": str(policy_path),
             }
 
-    @app.put("/api/policies")
+    @app.put(
+        "/api/policies",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def update_policies(
         req: PolicyUpdateRequest, authorization: str | None = Header(None)
     ) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "policies")
-        policy_path = Path(gateway.config.policy_file)
+        from raucle._paths import validate_path
+
+        policy_path = validate_path(gateway.config.policy_file, must_exist=False)
         policy_path.write_text(req.content, encoding="utf-8")
         result = gateway.reload_policies()
         return result
 
-    @app.post("/api/policies/reload")
+    @app.post(
+        "/api/policies/reload",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def reload_policies(authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "policies")
         return gateway.reload_policies()
 
-    @app.post("/api/policies/validate")
+    @app.post(
+        "/api/policies/validate",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def validate_policy(
         req: PolicyUpdateRequest, authorization: str | None = Header(None)
     ) -> dict[str, Any]:
@@ -308,7 +355,13 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             return {"valid": False, "error": str(exc)}
 
     # --- Receipts ---
-    @app.get("/api/receipts")
+    @app.get(
+        "/api/receipts",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def get_receipts(limit: int = 50, authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "receipts")
@@ -326,7 +379,13 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         return {"receipts": receipts, "count": len(receipts), "total": len(lines)}
 
     # --- SIEM Config ---
-    @app.get("/api/siem")
+    @app.get(
+        "/api/siem",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def get_siem_config(authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "config")
@@ -338,7 +397,13 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             "buffered_events": len(gateway.siem.buffered_events()),
         }
 
-    @app.put("/api/siem")
+    @app.put(
+        "/api/siem",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def update_siem_config(
         req: SIEMConfigRequest, authorization: str | None = Header(None)
     ) -> dict[str, Any]:
@@ -355,7 +420,13 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         return {"status": "ok"}
 
     # --- User Management (admin only) ---
-    @app.get("/api/users")
+    @app.get(
+        "/api/users",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+        },
+    )
     def list_users(authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "users")
@@ -366,7 +437,14 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             ]
         }
 
-    @app.post("/api/users")
+    @app.post(
+        "/api/users",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+            "400": {"description": "Invalid role"},
+        },
+    )
     def create_user(
         req: UserCreateRequest, authorization: str | None = Header(None)
     ) -> dict[str, Any]:
@@ -377,7 +455,14 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         new_user = users.add_user(req.api_key, req.role, req.name)
         return {"status": "ok", "api_key": new_user.api_key[:8] + "...", "role": new_user.role}
 
-    @app.delete("/api/users/{api_key}")
+    @app.delete(
+        "/api/users/{api_key}",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+            "404": {"description": "User not found"},
+        },
+    )
     def delete_user(api_key: str, authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "users")
@@ -386,7 +471,14 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         raise HTTPException(404, "user not found")
 
     # --- MFA Management ---
-    @app.post("/api/users/{api_key}/mfa/setup")
+    @app.post(
+        "/api/users/{api_key}/mfa/setup",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+            "404": {"description": "User not found"},
+        },
+    )
     def setup_mfa(api_key: str, authorization: str | None = Header(None)) -> dict[str, Any]:
         """Generate a TOTP secret and provisioning URI for a user.
 
@@ -406,7 +498,15 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             "qr_instructions": "Scan this URI with Google Authenticator, Authy, or 1Password. Then call /mfa/verify with the 6-digit code.",
         }
 
-    @app.post("/api/users/{api_key}/mfa/verify")
+    @app.post(
+        "/api/users/{api_key}/mfa/verify",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+            "400": {"description": "Invalid or missing code"},
+            "404": {"description": "User not found"},
+        },
+    )
     def verify_mfa_setup(
         api_key: str,
         code: str = "",
@@ -421,7 +521,14 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             return {"status": "ok", "mfa_enabled": True}
         raise HTTPException(400, "Invalid TOTP code")
 
-    @app.post("/api/users/{api_key}/mfa/disable")
+    @app.post(
+        "/api/users/{api_key}/mfa/disable",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Invalid API key or insufficient role"},
+            "404": {"description": "User not found"},
+        },
+    )
     def disable_mfa(api_key: str, authorization: str | None = Header(None)) -> dict[str, Any]:
         """Disable MFA for a user. Requires admin role."""
         user = check_auth(authorization)

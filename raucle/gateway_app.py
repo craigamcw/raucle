@@ -8,6 +8,7 @@ This module provides:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -293,18 +294,15 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             files = sorted(pdir.glob("*.yaml"))
             file_list = [{"name": f.name, "path": str(f), "size": f.stat().st_size} for f in files]
             if file:
-                # SECURITY: restrict file access to the policy directory only.
-                # Resolve via validate_path, then confine to the policy dir.
-                from raucle._paths import validate_path
-
-                try:
-                    target = validate_path(file, must_exist=False)
-                except ValueError:
-                    raise HTTPException(404, "File not found") from None
-                if not str(target).startswith(str(pdir.resolve())):
-                    raise HTTPException(403, "Access denied: file outside policy directory")
-                if not target.is_file():
-                    raise HTTPException(404, "File not found")
+                # SECURITY: never touch a user-supplied path directly.
+                # Match by basename against the files already enumerated
+                # from the policy directory (via glob, server-controlled).
+                target = next(
+                    (f for f in files if f.name == Path(file).name),
+                    None,
+                )
+                if target is None:
+                    raise HTTPException(404, "File not found in policy directory")
                 content = target.read_text(encoding="utf-8")
             elif files:
                 content = files[0].read_text(encoding="utf-8")
@@ -335,18 +333,24 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
     ) -> dict[str, Any]:
         user = check_auth(authorization)
         check_access(user, "policies")
-        from raucle._paths import validate_path
+        # SECURITY: validate user-supplied YAML before writing to disk,
+        # then write the CANONICALLY RE-SERIALISED document (not the raw
+        # request string). This breaks the request-to-disk taint flow:
+        # what lands on disk is parser output, not raw user input.
+        import yaml as _yaml
 
-        # SECURITY: validate user-supplied YAML before writing to disk.
-        # Rejects malformed content, breaking the request-to-disk taint flow.
-        check = _validate_policy_content(req.content)
-        if not check.get("valid"):
-            raise HTTPException(
-                400, f"Invalid policy content: {check.get('error', 'parse failure')}"
-            )
+        from raucle._paths import validate_path
+        from raucle.policy import PolicyFile as _PolicyFile
+
+        try:
+            parsed = _yaml.safe_load(req.content)
+            _PolicyFile.from_dict(parsed)
+        except Exception as exc:
+            raise HTTPException(400, f"Invalid policy content: {exc}") from exc
+        safe_content = _yaml.dump(parsed, default_flow_style=False, sort_keys=False)
 
         policy_path = validate_path(gateway.config.policy_file, must_exist=False)
-        policy_path.write_text(req.content, encoding="utf-8")
+        policy_path.write_text(safe_content, encoding="utf-8")
         result = gateway.reload_policies()
         return result
 

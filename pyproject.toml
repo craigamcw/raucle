@@ -45,7 +45,11 @@ dependencies = []
 [project.optional-dependencies]
 rules = ["pyyaml>=6.0"]
 ml = ["transformers>=4.30", "torch>=2.0"]
-server = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "pydantic>=2.0"]
+server = [
+    "fastapi>=0.100", "uvicorn[standard]>=0.20", "pydantic>=2.0",
+    "slowapi>=0.1.9",     # Rate limiting for gateway endpoints
+    "pyotp>=2.9",         # TOTP MFA for admin panel authentication
+]
 compliance = ["cryptography>=42.0"]
 agent-framework = ["agent-framework>=1.0"]
 langchain = ["langchain-core>=0.3"]
@@ -58,6 +62,22 @@ multimodal = [
 ]
 proof = [
     "z3-solver>=4.12",    # SMT engine for formal-verification provers
+]
+kms = [
+    "boto3>=1.26",        # AWS KMS signer
+]
+kms-azure = [
+    "azure-keyvault-keys>=4.7",  # Azure Key Vault signer
+    "azure-identity>=1.12",     # Azure authentication
+]
+kms-vault = [
+    "hvac>=1.0",          # HashiCorp Vault signer
+]
+kms-all = [
+    "boto3>=1.26",
+    "azure-keyvault-keys>=4.7",
+    "azure-identity>=1.12",
+    "hvac>=1.0",
 ]
 dev = [
     "raucle[rules,server,compliance,langchain]",
@@ -92,6 +112,9 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # Test files use pytest.importorskip before imports — E402 is unavoidable
 "tests/*.py" = ["E402"]
+# gateway_app.py embeds large HTML/JS admin-panel constants (single-line
+# JS, long SVG paths). Line-length limits do not apply to embedded markup.
+"raucle/gateway_app.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

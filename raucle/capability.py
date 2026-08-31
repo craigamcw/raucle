@@ -604,18 +604,24 @@ class CapabilityIssuer:
         private_key: Any,
         *,
         require_proof: bool | None = None,
+        remote_signer: Any = None,
     ) -> None:
         if not issuer:
             raise ValueError("issuer must not be empty")
         self.issuer = issuer
         self._priv = private_key
-        serialization, _ed25519, _invalid_sig = _require_crypto()
-        pub_pem = private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        self.public_key_pem = pub_pem.decode("ascii")
-        self.key_id = _sha256_hex(pub_pem)[:16]
+        self._remote_signer = remote_signer
+        if remote_signer is not None:
+            # KMS/HSM mode: public key comes from the remote signer
+            self.public_key_pem = remote_signer.public_key_pem().decode("ascii")
+        else:
+            serialization, _ed25519, _invalid_sig = _require_crypto()
+            pub_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            self.public_key_pem = pub_pem.decode("ascii")
+        self.key_id = _sha256_hex(self.public_key_pem.encode("ascii"))[:16]
         # Env-var fallback: the kwarg always wins when explicitly set;
         # otherwise consult ``RAUCLE_REQUIRE_PROOF``.
         if require_proof is None:
@@ -661,7 +667,42 @@ class CapabilityIssuer:
         priv = serialization.load_pem_private_key(key_path.read_bytes(), password=pw)
         return cls(issuer=issuer, private_key=priv, require_proof=require_proof)
 
+    @classmethod
+    def from_signer(
+        cls,
+        issuer: str,
+        signer: Any,
+        *,
+        require_proof: bool | None = None,
+    ) -> CapabilityIssuer:
+        """Create an issuer backed by a remote signer (KMS/HSM).
+
+        The signer must implement the :class:`~raucle.kms.Signer` protocol:
+        ``sign(data: bytes) -> bytes`` and ``public_key_pem() -> bytes``.
+
+        The private key never leaves the KMS/HSM. All signing is delegated
+        to the remote service.
+
+        Example::
+
+            from raucle.kms import AWSSigner
+            signer = AWSSigner(key_id="alias/raucle-issuing-key")
+            issuer = CapabilityIssuer.from_signer("acme.bank", signer)
+        """
+        # Create with a dummy private key (not used) and the remote signer.
+        return cls(
+            issuer=issuer,
+            private_key=None,  # type: ignore[arg-type]
+            require_proof=require_proof,
+            remote_signer=signer,
+        )
+
     def save_private_key(self, path: str | Path) -> None:
+        if self._remote_signer is not None:
+            raise NotImplementedError(
+                "save_private_key is not available when using a remote signer "
+                "(KMS/HSM). The private key is held by the remote service."
+            )
         serialization, _ed, _invalid_sig = _require_crypto()
         pem = self._priv.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -679,6 +720,12 @@ class CapabilityIssuer:
                 fh.write(pem)
         finally:
             os.chmod(p, 0o600)
+
+    def _sign(self, data: bytes) -> bytes:
+        """Sign data with Ed25519, delegating to KMS/HSM if configured."""
+        if self._remote_signer is not None:
+            return self._remote_signer.sign(data)
+        return self._priv.sign(data)
 
     def mint(
         self,
@@ -781,7 +828,7 @@ class CapabilityIssuer:
         )
         cap.token_id = "cap:" + _sha256_hex(_canonical_json(cap.body()))[:24]
         # Re-canonicalise with token_id included.
-        cap.signature = _b64(self._priv.sign(_canonical_json(cap.body())))
+        cap.signature = _b64(self._sign(_canonical_json(cap.body())))
         return cap
 
     @staticmethod
@@ -901,7 +948,7 @@ class CapabilityIssuer:
             policy_proof_hash=parent.policy_proof_hash,
         )
         child.token_id = "cap:" + _sha256_hex(_canonical_json(child.body()))[:24]
-        child.signature = _b64(self._priv.sign(_canonical_json(child.body())))
+        child.signature = _b64(self._sign(_canonical_json(child.body())))
         return child
 
 

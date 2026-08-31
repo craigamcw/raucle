@@ -1,0 +1,288 @@
+# Raucle Gateway - Insurance Industry Policy
+#
+# Covers: claims processing, underwriting, policy management, risk assessment
+# Roles: claims agent, underwriting bot, policy admin, risk assessor
+# Compliance: FCA, PRA, Solvency II, GDPR, consumer duty
+#
+# Insurance-specific requirements:
+#   - Claim amount thresholds with multi-level approval
+#   - Underwriting risk limits
+#   - Policy binding authority controls
+#   - Fraud detection integration
+#   - Regulatory reporting automation
+
+version: 1
+issuer: acme.insurance
+
+policies:
+  # ---------------------------------------------------------------
+  # Claims processing
+  # ---------------------------------------------------------------
+  - tool: create_claim
+    agent_id: agent:claims-processor
+    ttl_seconds: 600
+    constraints:
+      allow:
+        claim_type: ["motor", "home", "travel", "health", "life", "business"]
+      max:
+        claim_amount: 500000
+      min:
+        claim_amount: 1
+      require:
+        - policy_number
+        - claim_type
+        - claim_amount
+        - incident_date
+        - claimant_id
+    require_approval_when:
+      claim_amount_gt: 50000
+    description: "Create insurance claims, max 500k, human approval over 50k"
+
+  - tool: assess_claim
+    agent_id: agent:claims-processor
+    ttl_seconds: 1800
+    constraints:
+      allow:
+        assessment_type: ["desktop-review", "field-inspection", "medical-review", "engineering-report"]
+      require:
+        - claim_id
+        - assessment_type
+        - assessor_id
+    description: "Assess a claim via approved assessment methods"
+
+  - tool: settle_claim
+    agent_id: agent:claims-processor
+    ttl_seconds: 300
+    constraints:
+      allow:
+        settlement_type: ["full", "partial", "ex-gratia"]
+      max:
+        settlement_amount: 250000
+      require:
+        - claim_id
+        - settlement_amount
+        - settlement_type
+    require_approval_when:
+      settlement_amount_gt: 100000
+    description: "Settle claims, max 250k, approval over 100k"
+
+  - tool: reject_claim
+    agent_id: agent:claims-processor
+    ttl_seconds: 300
+    constraints:
+      allow:
+        reason_code: ["not-covered", "exceeds-limit", "fraud-detected", "late-notification", "policy-lapsed"]
+      require:
+        - claim_id
+        - reason_code
+        - detailed_reason
+    require_approval_when: {}
+    description: "Reject a claim (always requires human approval)"
+
+  - tool: pay_claim
+    agent_id: agent:claims-processor
+    ttl_seconds: 120
+    constraints:
+      allow:
+        payment_method: ["bank-transfer", "cheque"]
+      max:
+        amount: 250000
+      require:
+        - claim_id
+        - amount
+        - payment_method
+        - payee_account
+    require_approval_when:
+      amount_gt: 50000
+    description: "Pay settled claims, max 250k, approval over 50k"
+
+  # ---------------------------------------------------------------
+  # Underwriting
+  # ---------------------------------------------------------------
+  - tool: generate_quote
+    agent_id: agent:underwriting-bot
+    ttl_seconds: 120
+    constraints:
+      allow:
+        product_type: ["motor", "home", "travel", "health", "life", "business"]
+      max:
+        premium_annual: 50000
+        coverage_amount: 2000000
+      min:
+        premium_annual: 10
+      require:
+        - product_type
+        - applicant_id
+        - risk_factors
+    description: "Generate insurance quotes, max 50k annual premium, 2M coverage"
+
+  - tool: bind_policy
+    agent_id: agent:underwriting-bot
+    ttl_seconds: 300
+    constraints:
+      allow:
+        product_type: ["motor", "home", "travel", "health", "life"]
+      max:
+        coverage_amount: 1000000
+        premium_annual: 25000
+      require:
+        - quote_id
+        - product_type
+        - coverage_amount
+        - premium_annual
+    require_approval_when:
+      coverage_amount_gt: 500000
+    description: "Bind insurance policies, max 1M coverage, approval over 500k"
+
+  - tool: bind_high_risk_policy
+    agent_id: agent:underwriting-bot
+    ttl_seconds: 600
+    constraints:
+      allow:
+        product_type: ["business", "marine", "aviation", "professional-indemnity"]
+      max:
+        coverage_amount: 10000000
+        premium_annual: 500000
+      require:
+        - quote_id
+        - product_type
+        - coverage_amount
+        - premium_annual
+        - risk_assessment_id
+    require_approval_when: {}
+    description: "Bind high-risk policies (always requires senior underwriter approval)"
+
+  # ---------------------------------------------------------------
+  # Policy management
+  # ---------------------------------------------------------------
+  - tool: renew_policy
+    agent_id: agent:policy-admin
+    ttl_seconds: 300
+    constraints:
+      allow:
+        product_type: ["motor", "home", "travel", "health", "life", "business"]
+      max:
+        premium_increase_percent: 25
+      require:
+        - policy_number
+        - new_premium
+        - product_type
+    require_approval_when:
+      premium_increase_percent_gt: 15
+    description: "Renew policies, max 25% increase, approval over 15%"
+
+  - tool: cancel_policy
+    agent_id: agent:policy-admin
+    ttl_seconds: 300
+    constraints:
+      allow:
+        reason: ["customer-request", "non-payment", "fraud", "material-misrepresentation"]
+      require:
+        - policy_number
+        - reason
+    require_approval_when: {}
+    description: "Cancel a policy (always requires human approval)"
+
+  - tool: update_policy_holder
+    agent_id: agent:policy-admin
+    ttl_seconds: 120
+    constraints:
+      allow:
+        field: ["address", "phone", "email", "name"]
+      deny:
+        field: ["date-of-birth", "national-insurance-number", "medical-history"]
+      require:
+        - policy_number
+        - field
+        - new_value
+    description: "Update policyholder contact details (not DOB/NI/medical)"
+
+  # ---------------------------------------------------------------
+  # Risk assessment
+  # ---------------------------------------------------------------
+  - tool: calculate_risk_score
+    agent_id: agent:risk-assessor
+    ttl_seconds: 120
+    constraints:
+      allow:
+        risk_model: ["motor-v3", "home-v2", "travel-v2", "health-v4", "business-v1"]
+      max:
+        risk_score: 100
+      require:
+        - applicant_id
+        - risk_model
+        - input_factors
+    description: "Calculate risk score using approved models (0-100)"
+
+  - tool: flag_high_risk
+    agent_id: agent:risk-assessor
+    ttl_seconds: 60
+    constraints:
+      allow:
+        risk_category: ["high", "very-high", "prohibited"]
+      require:
+        - applicant_id
+        - risk_category
+        - risk_factors
+    description: "Flag an applicant as high risk"
+
+  # ---------------------------------------------------------------
+  # Fraud detection
+  # ---------------------------------------------------------------
+  - tool: fraud_screen_claim
+    agent_id: agent:fraud-detection
+    ttl_seconds: 60
+    constraints:
+      allow:
+        check_type: ["velocity-check", "claim-history", "identity-verify", "ip-analysis", "device-fingerprint"]
+      max:
+        fraud_score: 100
+      require:
+        - claim_id
+        - check_type
+    description: "Screen claims for fraud indicators"
+
+  - tool: refer_to_investigators
+    agent_id: agent:fraud-detection
+    ttl_seconds: 300
+    constraints:
+      allow:
+        priority: ["standard", "high", "urgent"]
+      max:
+        fraud_score: 100
+      require:
+        - claim_id
+        - fraud_score
+        - priority
+        - investigation_reason
+    require_approval_when: {}
+    description: "Refer suspicious claims to the fraud investigation team (always requires approval)"
+
+  # ---------------------------------------------------------------
+  # Regulatory reporting
+  # ---------------------------------------------------------------
+  - tool: file_regulatory_report
+    agent_id: agent:compliance-officer
+    ttl_seconds: 3600
+    constraints:
+      allow:
+        report_type: ["solvency-ii", "fca-annual", "pra-quarterly", "gdpr-breach", "complaints-report"]
+        jurisdiction: ["UK", "EU"]
+      require:
+        - report_type
+        - jurisdiction
+        - reporting_period
+    require_approval_when: {}
+    description: "File regulatory reports (always requires compliance officer approval)"
+
+  - tool: generate_solvency_report
+    agent_id: agent:compliance-officer
+    ttl_seconds: 3600
+    constraints:
+      allow:
+        report_version: ["SII-2024", "SII-2025", "SII-2026"]
+      require:
+        - report_version
+        - reporting_date
+        - solvency_ratio
+    description: "Generate Solvency II capital adequacy report"

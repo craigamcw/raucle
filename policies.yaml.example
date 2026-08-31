@@ -1,0 +1,54 @@
+# Example enterprise policy file for the Raucle Gateway.
+# Copy to /etc/raucle/policies.yaml and edit.
+#
+# This file is authored by risk officers and compliance teams.
+# No Python knowledge required. See docs/getting-started/ for full reference.
+
+version: 1
+issuer: enterprise.bank
+
+policies:
+  # --- Customer service: balance lookup ---
+  - tool: lookup_balance
+    agent_id: agent:customer-service
+    ttl_seconds: 600
+    constraints:
+      allow:
+        account: ["ACC-001", "ACC-002", "ACC-003", "ACC-004"]
+    description: "Customer service can look up balances for accounts 001-004"
+
+  # --- Payments: internal transfers ---
+  - tool: transfer_money
+    agent_id: agent:payments-bot
+    ttl_seconds: 300
+    constraints:
+      allow:
+        from_account: ["ACC-001", "ACC-002"]
+        to_account: ["ACC-003", "ACC-004"]
+      max:
+        amount: 10000
+      min:
+        amount: 1
+    require_approval_when:
+      amount_gt: 5000
+    description: "Internal transfers, max 10k, human approval required over 5k"
+
+  # --- Data access: customer records ---
+  - tool: get_customer_record
+    agent_id: agent:data-analyst
+    ttl_seconds: 900
+    constraints:
+      allow:
+        region: ["eu-west-1", "eu-west-2"]
+      deny:
+        classification: ["confidential", "restricted"]
+    description: "Data analyst can access EU customer records except confidential/restricted"
+
+  # --- Audit: view compliance reports ---
+  - tool: view_compliance_report
+    agent_id: agent:compliance-auditor
+    ttl_seconds: 3600
+    constraints:
+      allow:
+        framework: ["eu-ai-act", "iso-42001", "soc2"]
+    description: "Compliance auditor can view reports for all supported frameworks"

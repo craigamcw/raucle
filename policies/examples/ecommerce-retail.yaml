@@ -1,0 +1,259 @@
+# Raucle Gateway - E-Commerce and Retail Policy
+#
+# Covers: order management, inventory, pricing, customer service, logistics
+# Roles: order agent, inventory bot, pricing agent, customer service, logistics
+# Compliance: consumer protection, GDPR, regional pricing rules
+#
+# Retail-specific requirements:
+#   - Order value limits and approval thresholds
+#   - Inventory write-off authorisation
+#   - Dynamic pricing guardrails
+#   - Returns and refund processing
+#   - Shipping and fulfilment controls
+
+version: 1
+issuer: retail.platform
+
+policies:
+  # ---------------------------------------------------------------
+  # Order management
+  # ---------------------------------------------------------------
+  - tool: create_order
+    agent_id: agent:order-processor
+    ttl_seconds: 120
+    constraints:
+      allow:
+        currency: ["EUR", "GBP", "USD"]
+        channel: ["web", "mobile-app", "marketplace", "b2b-portal"]
+      max:
+        order_value: 50000
+        item_count: 100
+      min:
+        order_value: 1
+      require:
+        - customer_id
+        - items
+        - currency
+        - channel
+    require_approval_when:
+      order_value_gt: 25000
+    description: "Create orders, max 50k value, 100 items, approval over 25k"
+
+  - tool: cancel_order
+    agent_id: agent:order-processor
+    ttl_seconds: 120
+    constraints:
+      allow:
+        reason: ["customer-request", "out-of-stock", "payment-failed", "fraud-flag"]
+      max:
+        order_age_hours: 24
+      require:
+        - order_id
+        - reason
+    description: "Cancel orders within 24 hours of creation"
+
+  - tool: modify_order
+    agent_id: agent:order-processor
+    ttl_seconds: 60
+    constraints:
+      allow:
+        modification_type: ["change-address", "add-item", "remove-item", "change-shipping"]
+      deny:
+        modification_type: ["change-price", "apply-discount-code"]
+      max:
+        order_age_hours: 12
+      require:
+        - order_id
+        - modification_type
+    description: "Modify orders within 12 hours, no price or discount changes"
+
+  # ---------------------------------------------------------------
+  # Inventory management
+  # ---------------------------------------------------------------
+  - tool: update_stock
+    agent_id: agent:inventory-bot
+    ttl_seconds: 60
+    constraints:
+      allow:
+        warehouse: ["uk-main", "eu-main", "us-east"]
+      max:
+        quantity_change: 10000
+      require:
+        - sku
+        - warehouse
+        - quantity_change
+    description: "Update stock levels, max 10k unit change per call"
+
+  - tool: write_off_stock
+    agent_id: agent:inventory-bot
+    ttl_seconds: 300
+    constraints:
+      allow:
+        warehouse: ["uk-main", "eu-main", "us-east"]
+        reason: ["damaged", "expired", "lost", "quality-fail", "recall"]
+      max:
+        quantity: 1000
+        value: 50000
+      require:
+        - sku
+        - warehouse
+        - quantity
+        - reason
+    require_approval_when:
+      value_gt: 10000
+    description: "Write off stock, max 1k units / 50k value, approval over 10k"
+
+  - tool: transfer_stock
+    agent_id: agent:inventory-bot
+    ttl_seconds: 300
+    constraints:
+      allow:
+        from_warehouse: ["uk-main", "eu-main", "us-east"]
+        to_warehouse: ["uk-main", "eu-main", "us-east"]
+      max:
+        quantity: 5000
+      require:
+        - sku
+        - from_warehouse
+        - to_warehouse
+        - quantity
+    description: "Transfer stock between warehouses, max 5k units"
+
+  # ---------------------------------------------------------------
+  # Pricing and promotions
+  # ---------------------------------------------------------------
+  - tool: set_price
+    agent_id: agent:pricing-agent
+    ttl_seconds: 300
+    constraints:
+      allow:
+        market: ["UK", "EU", "US"]
+      max:
+        discount_percent: 50
+      min:
+        margin_percent: 5
+      require:
+        - sku
+        - price
+        - market
+    require_approval_when:
+      discount_percent_gt: 30
+    description: "Set prices, max 50% discount, min 5% margin, approval over 30% discount"
+
+  - tool: create_promotion
+    agent_id: agent:pricing-agent
+    ttl_seconds: 600
+    constraints:
+      allow:
+        promotion_type: ["percentage-off", "fixed-amount", "free-shipping", "bundle"]
+      deny:
+        promotion_type: ["loss-leader", "below-cost", "predatory"]
+      max:
+        discount_percent: 40
+        duration_days: 30
+      require:
+        - promotion_name
+        - promotion_type
+        - start_date
+        - end_date
+    require_approval_when:
+      discount_percent_gt: 25
+    description: "Create promotions, max 40% off, 30 day duration, approval over 25%"
+
+  # ---------------------------------------------------------------
+  # Customer service
+  # ---------------------------------------------------------------
+  - tool: process_refund
+    agent_id: agent:customer-service
+    ttl_seconds: 300
+    constraints:
+      allow:
+        refund_method: ["original-payment", "store-credit", "bank-transfer"]
+      max:
+        amount: 5000
+      require:
+        - order_id
+        - amount
+        - refund_method
+        - reason
+    require_approval_when:
+      amount_gt: 1000
+    description: "Process customer refunds, max 5k, approval over 1k"
+
+  - tool: apply_credit
+    agent_id: agent:customer-service
+    ttl_seconds: 120
+    constraints:
+      allow:
+        credit_type: ["goodwill", "shipping-compensation", "price-match"]
+      max:
+        amount: 500
+      require:
+        - customer_id
+        - amount
+        - credit_type
+        - reason
+    description: "Apply customer credit, max 500"
+
+  # ---------------------------------------------------------------
+  # Logistics and shipping
+  # ---------------------------------------------------------------
+  - tool: create_shipment
+    agent_id: agent:logistics
+    ttl_seconds: 120
+    constraints:
+      allow:
+        carrier: ["dhl", "fedex", "royal-mail", "ups"]
+        service: ["standard", "express", "next-day", "international"]
+      deny:
+        destination_country: ["IR", "KP", "SY", "CU", "RU", "BY"]
+      require:
+        - order_id
+        - carrier
+        - service
+        - destination_country
+    description: "Create shipments with approved carriers, blocked sanctioned destinations"
+
+  - tool: update_tracking
+    agent_id: agent:logistics
+    ttl_seconds: 60
+    constraints:
+      allow:
+        status: ["picked-up", "in-transit", "out-for-delivery", "delivered", "returned"]
+      require:
+        - shipment_id
+        - status
+    description: "Update shipment tracking status"
+
+  # ---------------------------------------------------------------
+  # Product catalogue
+  # ---------------------------------------------------------------
+  - tool: publish_product
+    agent_id: agent:catalogue-agent
+    ttl_seconds: 300
+    constraints:
+      allow:
+        category: ["electronics", "clothing", "home", "sports", "books", "food"]
+      deny:
+        category: ["restricted", "age-restricted", "regulated"]
+      max:
+        price: 100000
+      require:
+        - sku
+        - name
+        - category
+        - price
+    require_approval_when:
+      price_gt: 50000
+    description: "Publish products in approved categories, max 100k price, approval over 50k"
+
+  - tool: unpublish_product
+    agent_id: agent:catalogue-agent
+    ttl_seconds: 120
+    constraints:
+      allow:
+        reason: ["discontinued", "quality-issue", "recall", "compliance", "voluntary"]
+      require:
+        - sku
+        - reason
+    description: "Unpublish a product (requires a reason)"

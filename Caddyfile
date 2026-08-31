@@ -1,0 +1,45 @@
+# Caddy reverse proxy for the Raucle Gateway.
+# Provides automatic TLS termination with Let's Encrypt.
+#
+# Usage:
+#   docker compose -f docker-compose.gateway.yml up -d
+#
+# The Caddy container terminates TLS on ports 443 (gateway + admin)
+# and forwards to the raucle-gateway container on internal ports.
+#
+# Replace raucle.example.com with your domain.
+# Caddy will automatically provision a Let's Encrypt certificate.
+
+raucle.example.com {
+	# Gateway API
+	handle /gate* {
+		reverse_proxy raucle-gateway:8080
+	}
+
+	# Admin panel and API
+	handle /* {
+		reverse_proxy raucle-gateway:8081
+	}
+
+	# Security headers
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+	}
+
+	# Rate limiting (basic, per-IP)
+	rate_limit {
+		zone gateway {
+			events 100
+			window 1m
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

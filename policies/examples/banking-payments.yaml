@@ -1,0 +1,204 @@
+# Raucle Gateway - Banking and Payments Policy
+#
+# Covers: account lookups, transfers, card operations, loan applications
+# Roles: customer service, payments bot, card management, loan officer
+# Approval: transfers over 5k, card limit increases, loan approvals
+#
+# Source/destination matching:
+#   source: matches the inbound agent/service making the call
+#   destination: matches the outbound tool/API target
+#   Wildcards (*, ?) supported via fnmatch
+#   Empty or "*" means "match anything"
+#
+# This file is only loaded if the gateway's policy_dir includes it.
+# Multiple policy files can coexist - the gateway finds the first
+# matching rule for each tool call by source/destination.
+
+version: 1
+issuer: acme.bank
+
+policies:
+  # ---------------------------------------------------------------
+  # Customer service: read-only account access
+  # Source: customer-service-agent only
+  # ---------------------------------------------------------------
+  - tool: lookup_balance
+    agent_id: agent:customer-service
+    ttl_seconds: 600
+    source: "agent:customer-service*"
+    destination: "banking-core*"
+    constraints:
+      allow:
+        account: ["ACC-001", "ACC-002", "ACC-003", "ACC-004", "ACC-005"]
+    description: "Customer service can look up balances for accounts 001-005"
+
+  - tool: lookup_transaction_history
+    agent_id: agent:customer-service
+    ttl_seconds: 600
+    source: "agent:customer-service*"
+    destination: "banking-core*"
+    constraints:
+      allow:
+        account: ["ACC-001", "ACC-002", "ACC-003", "ACC-004", "ACC-005"]
+      max:
+        days: 90
+    description: "Customer service can view up to 90 days of transaction history"
+
+  # ---------------------------------------------------------------
+  # Payments: internal and external transfers
+  # Source: payments bot only, different destinations for internal vs external
+  # ---------------------------------------------------------------
+  - tool: transfer_internal
+    agent_id: agent:payments-bot
+    ttl_seconds: 300
+    source: "agent:payments*"
+    destination: "internal-ledger*"
+    constraints:
+      allow:
+        from_account: ["ACC-001", "ACC-002"]
+        to_account: ["ACC-003", "ACC-004"]
+      max:
+        amount: 10000
+      min:
+        amount: 1
+      require:
+        - from_account
+        - to_account
+        - amount
+    require_approval_when:
+      amount_gt: 5000
+    description: "Internal transfers to internal-ledger, max 10k, human approval over 5k"
+
+  - tool: transfer_external
+    agent_id: agent:payments-bot
+    ttl_seconds: 120
+    source: "agent:payments*"
+    destination: "swift-network*"
+    constraints:
+      allow:
+        from_account: ["ACC-001", "ACC-002"]
+      deny:
+        to_account: ["BLACKLIST-001", "BLACKLIST-002"]
+      max:
+        amount: 5000
+      min:
+        amount: 1
+      require:
+        - from_account
+        - to_account
+        - amount
+        - reference
+    require_approval_when:
+      amount_gt: 2000
+    description: "External transfers via SWIFT, max 5k, denied to blacklisted accounts, approval over 2k"
+
+  # ---------------------------------------------------------------
+  # Card operations: limit changes, block/unblock
+  # Source: card management system only, destination: card processor
+  # ---------------------------------------------------------------
+  - tool: increase_card_limit
+    agent_id: agent:card-management
+    ttl_seconds: 300
+    source: "agent:card-mgmt*"
+    destination: "card-processor*"
+    constraints:
+      allow:
+        card_id: ["CARD-001", "CARD-002", "CARD-003"]
+      max:
+        new_limit: 50000
+      require:
+        - card_id
+        - new_limit
+    require_approval_when:
+      new_limit_gt: 25000
+    description: "Card limit increases via card processor, max 50k, human approval over 25k"
+
+  - tool: block_card
+    agent_id: agent:card-management
+    ttl_seconds: 120
+    source: "agent:card-mgmt*"
+    destination: "card-processor*"
+    constraints:
+      allow:
+        card_id: ["CARD-001", "CARD-002", "CARD-003"]
+      require:
+        - card_id
+        - reason
+    description: "Block a card via card processor (requires a reason field)"
+
+  - tool: unblock_card
+    agent_id: agent:card-management
+    ttl_seconds: 120
+    source: "agent:card-mgmt*"
+    destination: "card-processor*"
+    constraints:
+      allow:
+        card_id: ["CARD-001", "CARD-002", "CARD-003"]
+      require:
+        - card_id
+        - reason
+    require_approval_when: {}
+    description: "Unblock a card (always requires human approval)"
+
+  # ---------------------------------------------------------------
+  # Loan applications: origination and status
+  # Source: loan officer agent, destination: loan origination system
+  # ---------------------------------------------------------------
+  - tool: create_loan_application
+    agent_id: agent:loan-officer
+    ttl_seconds: 600
+    source: "agent:loan*"
+    destination: "loan-origination*"
+    constraints:
+      allow:
+        loan_type: ["personal", "auto", "home"]
+      max:
+        amount: 500000
+      min:
+        amount: 1000
+      require:
+        - applicant_id
+        - loan_type
+        - amount
+        - term_months
+    require_approval_when:
+      amount_gt: 100000
+    description: "Loan applications via loan origination system, max 500k, human approval over 100k"
+
+  - tool: check_loan_status
+    agent_id: agent:loan-officer
+    ttl_seconds: 600
+    source: "agent:loan*"
+    destination: "loan-origination*"
+    constraints:
+      allow:
+        application_id: ["LOAN-001", "LOAN-002", "LOAN-003", "LOAN-004", "LOAN-005"]
+    description: "Check status of a loan application"
+
+  # ---------------------------------------------------------------
+  # Compliance: suspicious activity reporting
+  # Source: compliance officer agent, destination: regulatory filing system
+  # ---------------------------------------------------------------
+  - tool: file_sar
+    agent_id: agent:compliance-officer
+    ttl_seconds: 3600
+    source: "agent:compliance*"
+    destination: "regulatory-filing*"
+    constraints:
+      allow:
+        jurisdiction: ["UK", "EU", "US"]
+      require:
+        - transaction_id
+        - reason
+        - jurisdiction
+    description: "File a Suspicious Activity Report (SAR) for UK/EU/US jurisdictions"
+
+  - tool: check_sanctions
+    agent_id: agent:compliance-officer
+    ttl_seconds: 300
+    source: "agent:compliance*"
+    destination: "sanctions-screening*"
+    constraints:
+      starts_with:
+        entity_name: ["SAN-"]
+    description: "Check an entity against the sanctions list (must use SAN- prefixed IDs)"

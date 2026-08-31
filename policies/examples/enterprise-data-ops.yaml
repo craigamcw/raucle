@@ -1,0 +1,223 @@
+# Raucle Gateway - Enterprise Data and Cloud Operations Policy
+#
+# Covers: database access, cloud resource management, data pipelines, API calls
+# Roles: data analyst, devops agent, etl bot, api-gateway agent, security agent
+# Compliance: SOC2, ISO27001, data residency, PII handling
+#
+# Enterprise-specific requirements:
+#   - Data classification restrictions (PII, PCI, confidential)
+#   - Geographic data residency enforcement
+#   - Resource quota limits
+#   - Infrastructure change approvals
+#   - Secret and credential access controls
+
+version: 1
+issuer: enterprise.ops.platform
+
+policies:
+  # ---------------------------------------------------------------
+  # Database access: read and write controls
+  # ---------------------------------------------------------------
+  - tool: query_database
+    agent_id: agent:data-analyst
+    ttl_seconds: 120
+    constraints:
+      allow:
+        database: ["analytics-db", "reporting-db", "metrics-db"]
+        query_type: ["SELECT", "COUNT", "SUM", "AVG", "GROUP"]
+      deny:
+        database: ["prod-payments-db", "prod-customers-db", "auth-db"]
+        query_type: ["DROP", "DELETE", "TRUNCATE", "ALTER", "GRANT", "REVOKE"]
+      require:
+        - database
+        - query_type
+    description: "Read-only database queries on non-production databases"
+
+  - tool: execute_data_pipeline
+    agent_id: agent:etl-bot
+    ttl_seconds: 3600
+    constraints:
+      allow:
+        pipeline: ["daily-revenue-etl", "hourly-metrics-aggregation", "weekly-compliance-report"]
+        source: ["analytics-db", "metrics-db", "events-stream"]
+        destination: ["data-warehouse", "reporting-db", "compliance-archive"]
+      deny:
+        source: ["prod-payments-db", "prod-customers-db"]
+      max:
+        records: 1000000
+      require:
+        - pipeline
+        - source
+        - destination
+    description: "Execute approved ETL pipelines, max 1M records, no prod source"
+
+  # ---------------------------------------------------------------
+  # Cloud resource management: infrastructure as code
+  # ---------------------------------------------------------------
+  - tool: scale_resource
+    agent_id: agent:devops
+    ttl_seconds: 120
+    constraints:
+      allow:
+        resource_type: ["ecs-service", "lambda-function", "k8s-deployment", "rds-instance"]
+        environment: ["staging", "production"]
+      max:
+        replica_count: 20
+      min:
+        replica_count: 1
+      require:
+        - resource_type
+        - environment
+        - replica_count
+    require_approval_when:
+      replica_count_gt: 10
+    description: "Scale cloud resources, max 20 replicas, approval over 10"
+
+  - tool: deploy_application
+    agent_id: agent:devops
+    ttl_seconds: 600
+    constraints:
+      allow:
+        environment: ["staging", "pre-production"]
+      deny:
+        environment: ["production"]
+      require:
+        - application
+        - environment
+        - version
+        - commit_sha
+    description: "Deploy to staging and pre-production only (production requires separate approval)"
+
+  - tool: deploy_production
+    agent_id: agent:devops
+    ttl_seconds: 300
+    constraints:
+      allow:
+        application: ["api-gateway", "auth-service", "billing-service"]
+      require:
+        - application
+        - version
+        - commit_sha
+        - change_ticket
+    require_approval_when: {}
+    description: "Deploy to production (always requires human approval, requires change ticket)"
+
+  # ---------------------------------------------------------------
+  # Secret and credential management
+  # ---------------------------------------------------------------
+  - tool: read_secret
+    agent_id: agent:devops
+    ttl_seconds: 30
+    constraints:
+      allow:
+        secret_path: ["config/", "certs/", "api-keys/"]
+      deny:
+        secret_path: ["admin/", "root/", "master-key", "hsm-pin"]
+      require:
+        - secret_path
+        - requesting_service
+    description: "Read non-admin secrets from approved paths"
+
+  - tool: rotate_secret
+    agent_id: agent:devops
+    ttl_seconds: 120
+    constraints:
+      allow:
+        secret_path: ["config/", "certs/", "api-keys/"]
+      deny:
+        secret_path: ["admin/", "root/", "master-key", "hsm-pin"]
+      require:
+        - secret_path
+        - requesting_service
+    require_approval_when: {}
+    description: "Rotate secrets (always requires human approval)"
+
+  # ---------------------------------------------------------------
+  # API gateway management
+  # ---------------------------------------------------------------
+  - tool: create_api_key
+    agent_id: agent:api-gateway-agent
+    ttl_seconds: 120
+    constraints:
+      allow:
+        api_scope: ["read:metrics", "read:reports", "write:webhooks"]
+      deny:
+        api_scope: ["admin:all", "write:payments", "delete:any"]
+      max:
+        rate_limit_per_minute: 1000
+      require:
+        - client_name
+        - api_scope
+    description: "Create API keys with limited scopes, max 1000 req/min"
+
+  - tool: revoke_api_key
+    agent_id: agent:api-gateway-agent
+    ttl_seconds: 60
+    constraints:
+      allow:
+        api_scope: ["read:metrics", "read:reports", "write:webhooks"]
+      require:
+        - api_key_id
+        - reason
+    description: "Revoke an API key (requires a reason)"
+
+  # ---------------------------------------------------------------
+  # Security operations: scanning and response
+  # ---------------------------------------------------------------
+  - tool: run_security_scan
+    agent_id: agent:security-agent
+    ttl_seconds: 3600
+    constraints:
+      allow:
+        scan_type: ["dependency-audit", "container-scan", "iac-scan", "secret-scan"]
+        target: ["staging", "pre-production", "production"]
+      require:
+        - scan_type
+        - target
+    description: "Run security scans on infrastructure and applications"
+
+  - tool: quarantine_resource
+    agent_id: agent:security-agent
+    ttl_seconds: 120
+    constraints:
+      allow:
+        resource_type: ["container", "vm", "lambda-function"]
+      require:
+        - resource_id
+        - resource_type
+        - threat_indicator
+    require_approval_when: {}
+    description: "Quarantine a suspected compromised resource (always requires human approval)"
+
+  # ---------------------------------------------------------------
+  # Compliance and audit
+  # ---------------------------------------------------------------
+  - tool: generate_compliance_report
+    agent_id: agent:compliance-auditor
+    ttl_seconds: 3600
+    constraints:
+      allow:
+        framework: ["soc2", "iso27001", "iso42001", "eu-ai-act", "pci-dss"]
+        period: ["monthly", "quarterly", "annual"]
+      require:
+        - framework
+        - period
+    description: "Generate compliance reports for supported frameworks"
+
+  - tool: export_audit_log
+    agent_id: agent:compliance-auditor
+    ttl_seconds: 600
+    constraints:
+      allow:
+        format: ["json", "csv", "pdf"]
+        destination: ["compliance-archive", "auditor-portal"]
+      deny:
+        destination: ["external-api", "public-storage"]
+      max:
+        records: 500000
+      require:
+        - format
+        - destination
+        - date_range_start
+        - date_range_end
+    description: "Export audit logs to compliance archive, max 500k records"

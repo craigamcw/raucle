@@ -1,0 +1,218 @@
+# Raucle Gateway - Healthcare and Medical AI Policy
+#
+# Covers: patient records, prescriptions, diagnostic imaging, lab results
+# Roles: clinical assistant, pharmacy bot, triage agent, medical records
+# Compliance: HIPAA, GDPR health data, NHS Data Security Standard
+#
+# Key healthcare requirements:
+#   - PHI (Protected Health Information) access controls
+#   - Prescription limits (dosage, controlled substances)
+#   - Audit trail for every patient data access
+#   - Human approval for diagnostic recommendations
+#   - Data classification restrictions
+
+version: 1
+issuer: stmarys.nhs.trust
+
+policies:
+  # ---------------------------------------------------------------
+  # Patient record access: role-based with department restrictions
+  # ---------------------------------------------------------------
+  - tool: read_patient_record
+    agent_id: agent:clinical-assistant
+    ttl_seconds: 300
+    constraints:
+      allow:
+        department: ["emergency", "general-medicine", "cardiology", "neurology"]
+      deny:
+        record_type: ["psychiatric", "hiv", "substance-abuse"]
+      require:
+        - patient_id
+        - department
+        - clinical_reason
+    description: "Clinical assistant can read non-sensitive records in assigned departments"
+
+  - tool: write_patient_note
+    agent_id: agent:clinical-assistant
+    ttl_seconds: 120
+    constraints:
+      allow:
+        department: ["emergency", "general-medicine"]
+      max:
+        note_length: 5000
+      require:
+        - patient_id
+        - department
+        - note_content
+        - authoring_clinician_id
+    description: "Write clinical notes (max 5000 chars, emergency and general medicine only)"
+
+  # ---------------------------------------------------------------
+  # Prescriptions: dosage limits and controlled substances
+  # ---------------------------------------------------------------
+  - tool: prescribe_medication
+    agent_id: agent:pharmacy-bot
+    ttl_seconds: 300
+    constraints:
+      allow:
+        medication_class: ["antibiotic", "analgesic", "antiviral", "antifungal"]
+      deny:
+        medication_class: ["controlled-class-a", "controlled-class-b"]
+      max:
+        dosage_mg: 1000
+        duration_days: 30
+      min:
+        dosage_mg: 1
+        duration_days: 1
+      require:
+        - patient_id
+        - medication_name
+        - dosage_mg
+        - duration_days
+        - prescribing_clinician_id
+    require_approval_when:
+      dosage_mg_gt: 500
+    description: "Prescribe non-controlled medications, max 1000mg, 30 days, approval over 500mg"
+
+  - tool: prescribe_controlled
+    agent_id: agent:pharmacy-bot
+    ttl_seconds: 120
+    constraints:
+      allow:
+        medication_class: ["controlled-class-b"]
+      deny:
+        medication_class: ["controlled-class-a"]
+      max:
+        dosage_mg: 100
+        duration_days: 7
+      require:
+        - patient_id
+        - medication_name
+        - dosage_mg
+        - duration_days
+        - prescribing_clinician_id
+        - dea_number
+    require_approval_when: {}
+    description: "Prescribe controlled class-B substances, max 100mg/7 days, ALWAYS requires human approval"
+
+  # ---------------------------------------------------------------
+  # Diagnostic imaging: ordering and viewing
+  # ---------------------------------------------------------------
+  - tool: order_imaging
+    agent_id: agent:clinical-assistant
+    ttl_seconds: 600
+    constraints:
+      allow:
+        scan_type: ["xray", "ultrasound", "mri-non-contrast", "ct-non-contrast"]
+      deny:
+        scan_type: ["ct-contrast", "mri-contrast", "pet-scan"]
+      require:
+        - patient_id
+        - scan_type
+        - clinical_reason
+        - ordering_clinician_id
+    description: "Order non-contrast imaging studies (contrast studies require separate approval)"
+
+  - tool: view_imaging_result
+    agent_id: agent:clinical-assistant
+    ttl_seconds: 300
+    constraints:
+      allow:
+        department: ["emergency", "general-medicine", "cardiology", "neurology", "radiology"]
+      require:
+        - patient_id
+        - study_id
+    description: "View imaging results within authorised departments"
+
+  # ---------------------------------------------------------------
+  # Lab results: ordering and review
+  # ---------------------------------------------------------------
+  - tool: order_lab_test
+    agent_id: agent:clinical-assistant
+    ttl_seconds: 300
+    constraints:
+      allow:
+        test_type: ["blood-count", "metabolic-panel", "lipid-panel", "urinalysis", "liver-function"]
+      require:
+        - patient_id
+        - test_type
+        - clinical_reason
+    description: "Order routine lab tests"
+
+  - tool: review_lab_results
+    agent_id: agent:clinical-assistant
+    ttl_seconds: 600
+    constraints:
+      allow:
+        test_type: ["blood-count", "metabolic-panel", "lipid-panel", "urinalysis", "liver-function"]
+      require:
+        - patient_id
+        - test_id
+    description: "Review routine lab results"
+
+  # ---------------------------------------------------------------
+  # Triage: symptom assessment and routing
+  # ---------------------------------------------------------------
+  - tool: triage_assessment
+    agent_id: agent:triage-agent
+    ttl_seconds: 120
+    constraints:
+      allow:
+        urgency_level: ["routine", "urgent", "emergency"]
+      max:
+        assessment_duration_minutes: 10
+      require:
+        - patient_id
+        - presenting_symptoms
+        - urgency_level
+    description: "Triage assessment with urgency routing, max 10 minute assessment"
+
+  # ---------------------------------------------------------------
+  # Medical records: export and sharing
+  # ---------------------------------------------------------------
+  - tool: export_patient_summary
+    agent_id: agent:medical-records
+    ttl_seconds: 600
+    constraints:
+      allow:
+        format: ["fhir-json", "hl7-v2", "pdf-summary"]
+        recipient: ["gp-practice", "secondary-care", "patient-portal"]
+      deny:
+        recipient: ["third-party-research", "marketing", "external-api"]
+      require:
+        - patient_id
+        - format
+        - recipient
+        - requesting_clinician_id
+    require_approval_when: {}
+    description: "Export patient summary (always requires human approval, restricted recipients)"
+
+  # ---------------------------------------------------------------
+  # Appointment management
+  # ---------------------------------------------------------------
+  - tool: book_appointment
+    agent_id: agent:clinical-assistant
+    ttl_seconds: 300
+    constraints:
+      allow:
+        department: ["emergency", "general-medicine", "cardiology", "neurology", "radiology"]
+        appointment_type: ["initial-consult", "follow-up", "routine-check"]
+      max:
+        advance_days: 90
+      require:
+        - patient_id
+        - department
+        - appointment_type
+    description: "Book appointments up to 90 days in advance in authorised departments"
+
+  - tool: cancel_appointment
+    agent_id: agent:clinical-assistant
+    ttl_seconds: 120
+    constraints:
+      allow:
+        department: ["emergency", "general-medicine", "cardiology", "neurology", "radiology"]
+      require:
+        - patient_id
+        - appointment_id
+        - reason
+    description: "Cancel an appointment (requires a reason)"

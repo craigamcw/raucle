@@ -1,0 +1,229 @@
+# Raucle Gateway - Fintech and Payment Processing Policy
+#
+# Covers: payment processing, fraud checks, KYC/AML, merchant operations
+# Roles: payment processor, fraud detection, KYC agent, merchant services
+# Compliance: PCI-DSS, PSD2, MiCA (crypto), AML directives
+#
+# Fintech-specific requirements:
+#   - Transaction velocity limits (per-minute, per-hour)
+#   - Geographic restrictions (block sanctioned countries)
+#   - Merchant category code restrictions
+#   - Multi-step approval for high-risk transactions
+#   - Real-time fraud screening before payment execution
+
+version: 1
+issuer: fintech.payments.platform
+
+policies:
+  # ---------------------------------------------------------------
+  # Payment processing: card, bank transfer, e-wallet
+  # ---------------------------------------------------------------
+  - tool: process_card_payment
+    agent_id: agent:payment-processor
+    ttl_seconds: 60
+    constraints:
+      allow:
+        currency: ["EUR", "GBP", "USD", "CHF"]
+        merchant_category: ["groceries", "retail", "dining", "transport", "utilities"]
+      deny:
+        merchant_category: ["gambling", "weapons", "cryptocurrency-exchange", "adult-content"]
+      max:
+        amount: 5000
+      min:
+        amount: 1
+      require:
+        - merchant_id
+        - amount
+        - currency
+        - card_token
+    require_approval_when:
+      amount_gt: 2000
+    description: "Process card payments, max 5k, blocked categories, approval over 2k"
+
+  - tool: process_bank_transfer
+    agent_id: agent:payment-processor
+    ttl_seconds: 120
+    constraints:
+      allow:
+        currency: ["EUR", "GBP", "USD"]
+      deny:
+        destination_country: ["IR", "KP", "SY", "CU", "RU", "BY"]
+      max:
+        amount: 25000
+      min:
+        amount: 1
+      require:
+        - source_account
+        - destination_account
+        - amount
+        - currency
+        - destination_country
+    require_approval_when:
+      amount_gt: 10000
+    description: "Bank transfers, max 25k, blocked sanctioned countries, approval over 10k"
+
+  - tool: process_wallet_payment
+    agent_id: agent:payment-processor
+    ttl_seconds: 60
+    constraints:
+      allow:
+        wallet_type: ["apple-pay", "google-pay", "sepa-wallet"]
+      max:
+        amount: 1000
+      require:
+        - wallet_id
+        - amount
+        - currency
+    description: "Digital wallet payments, max 1k"
+
+  # ---------------------------------------------------------------
+  # Fraud detection: screening and scoring
+  # ---------------------------------------------------------------
+  - tool: fraud_check
+    agent_id: agent:fraud-detection
+    ttl_seconds: 30
+    constraints:
+      allow:
+        check_type: ["velocity", "geolocation", "device-fingerprint", "behavioural", "card-bin"]
+      max:
+        risk_score: 100
+      require:
+        - transaction_id
+        - check_type
+    description: "Run fraud screening checks, risk score 0-100"
+
+  - tool: block_transaction
+    agent_id: agent:fraud-detection
+    ttl_seconds: 120
+    constraints:
+      allow:
+        reason_code: ["velocity-exceeded", "geolocation-mismatch", "device-fraud", "bin-match-fail", "manual-review"]
+      require:
+        - transaction_id
+        - reason_code
+    description: "Block a transaction based on fraud detection results"
+
+  - tool: release_transaction
+    agent_id: agent:fraud-detection
+    ttl_seconds: 120
+    constraints:
+      allow:
+        reason_code: ["false-positive", "manual-review-approved", "step-up-auth-passed"]
+      require:
+        - transaction_id
+        - reason_code
+    require_approval_when: {}
+    description: "Release a held transaction (always requires human approval)"
+
+  # ---------------------------------------------------------------
+  # KYC / AML: identity verification
+  # ---------------------------------------------------------------
+  - tool: kyc_verify_identity
+    agent_id: agent:kyc-agent
+    ttl_seconds: 600
+    constraints:
+      allow:
+        verification_method: ["document", "biometric", "video-liveness", "database-check"]
+        jurisdiction: ["UK", "EU", "US", "CA", "AU"]
+      deny:
+        jurisdiction: ["IR", "KP", "SY", "CU", "RU", "BY"]
+      require:
+        - customer_id
+        - verification_method
+        - jurisdiction
+    description: "Verify customer identity via approved methods in authorised jurisdictions"
+
+  - tool: aml_screen
+    agent_id: agent:kyc-agent
+    ttl_seconds: 300
+    constraints:
+      allow:
+        screening_list: ["eu-sanctions", "uk-sanctions", "ofac-sdn", "un-consolidated", "pep-list"]
+      require:
+        - customer_id
+        - screening_list
+    description: "Screen customer against sanctions and PEP lists"
+
+  - tool: file_aml_report
+    agent_id: agent:kyc-agent
+    ttl_seconds: 3600
+    constraints:
+      allow:
+        report_type: ["sar", "ctr", "tfr"]
+        jurisdiction: ["UK", "EU", "US"]
+      require:
+        - customer_id
+        - report_type
+        - jurisdiction
+        - transaction_ids
+    require_approval_when: {}
+    description: "File AML reports (SAR, CTR, TFR), always requires human approval"
+
+  # ---------------------------------------------------------------
+  # Merchant operations: onboarding and management
+  # ---------------------------------------------------------------
+  - tool: onboard_merchant
+    agent_id: agent:merchant-services
+    ttl_seconds: 3600
+    constraints:
+      allow:
+        merchant_type: ["individual", "sole-trader", "limited-company", "partnership"]
+        jurisdiction: ["UK", "EU", "US", "CA", "AU"]
+      deny:
+        merchant_category: ["gambling", "weapons", "cryptocurrency-exchange", "adult-content", "unregulated-lending"]
+      require:
+        - merchant_name
+        - merchant_type
+        - jurisdiction
+        - business_address
+    require_approval_when: {}
+    description: "Onboard a new merchant (always requires human compliance approval)"
+
+  - tool: update_merchant_limits
+    agent_id: agent:merchant-services
+    ttl_seconds: 300
+    constraints:
+      allow:
+        merchant_id: ["MERCH-001", "MERCH-002", "MERCH-003"]
+      max:
+        monthly_volume: 1000000
+        transaction_limit: 50000
+      require:
+        - merchant_id
+        - monthly_volume
+        - transaction_limit
+    require_approval_when:
+      monthly_volume_gt: 500000
+    description: "Update merchant processing limits, max 1M monthly, approval over 500k"
+
+  # ---------------------------------------------------------------
+  # Refunds and chargebacks
+  # ---------------------------------------------------------------
+  - tool: process_refund
+    agent_id: agent:payment-processor
+    ttl_seconds: 300
+    constraints:
+      allow:
+        currency: ["EUR", "GBP", "USD"]
+      max:
+        amount: 10000
+      require:
+        - original_transaction_id
+        - amount
+        - currency
+        - reason
+    require_approval_when:
+      amount_gt: 5000
+    description: "Process refunds, max 10k, approval over 5k"
+
+  - tool: dispute_chargeback
+    agent_id: agent:payment-processor
+    ttl_seconds: 600
+    constraints:
+      allow:
+        reason_code: ["fraudulent", "duplicate", "product-not-received", "service-not-rendered"]
+      require:
+        - transaction_id
+        - reason_code
+        - evidence_summary
+    description: "Dispute a chargeback with evidence"

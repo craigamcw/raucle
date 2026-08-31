@@ -301,6 +301,35 @@ def _register_stats_routes(
         return {"connections": connections[:limit], "count": len(connections)}
 
 
+def _policy_dir_response(
+    policy_dir: str,
+    validate_path: Any,
+    file: str,
+) -> dict[str, Any]:
+    """Build the directory-mode response for GET /api/policies.
+
+    SECURITY: never touches a user-supplied path. The requested file is
+    matched by basename against the files enumerated from the policy
+    directory via glob (server-controlled list), making path traversal
+    structurally impossible.
+    """
+    pdir = validate_path(policy_dir, must_exist=False)
+    if not pdir.is_dir():
+        return {"content": "", "files": [], "mode": "dir", "path": str(pdir)}
+    files = sorted(pdir.glob("*.yaml"))
+    file_list = [{"name": f.name, "path": str(f), "size": f.stat().st_size} for f in files]
+    if file:
+        target = next((f for f in files if f.name == Path(file).name), None)
+        if target is None:
+            raise HTTPException(404, "File not found in policy directory")
+        content = target.read_text(encoding="utf-8")
+    elif files:
+        content = files[0].read_text(encoding="utf-8")
+    else:
+        content = ""
+    return {"content": content, "files": file_list, "mode": "dir", "path": str(pdir)}
+
+
 def _register_policy_routes(
     app: FastAPI, gateway: RaucleGateway, check_auth: Any, check_access: Any
 ) -> None:
@@ -324,38 +353,15 @@ def _register_policy_routes(
         user = check_auth(authorization)
         check_access(user, "policies")
         if gateway.config.policy_dir:
-            pdir = validate_path(gateway.config.policy_dir, must_exist=False)
-            if not pdir.is_dir():
-                return {"content": "", "files": [], "mode": "dir", "path": str(pdir)}
-            files = sorted(pdir.glob("*.yaml"))
-            file_list = [{"name": f.name, "path": str(f), "size": f.stat().st_size} for f in files]
-            if file:
-                # SECURITY: never touch a user-supplied path directly.
-                # Match by basename against the files already enumerated
-                # from the policy directory (via glob, server-controlled).
-                target = next(
-                    (f for f in files if f.name == Path(file).name),
-                    None,
-                )
-                if target is None:
-                    raise HTTPException(404, "File not found in policy directory")
-                content = target.read_text(encoding="utf-8")
-            elif files:
-                content = files[0].read_text(encoding="utf-8")
-            else:
-                content = ""
-            return {"content": content, "files": file_list, "mode": "dir", "path": str(pdir)}
-        else:
-            from raucle._paths import validate_path
-
-            policy_path = validate_path(gateway.config.policy_file, must_exist=False)
-            content = policy_path.read_text() if policy_path.exists() else ""
-            return {
-                "content": content,
-                "files": [{"name": policy_path.name, "path": str(policy_path)}],
-                "mode": "single",
-                "path": str(policy_path),
-            }
+            return _policy_dir_response(gateway.config.policy_dir, validate_path, file)
+        policy_path = validate_path(gateway.config.policy_file, must_exist=False)
+        content = policy_path.read_text() if policy_path.exists() else ""
+        return {
+            "content": content,
+            "files": [{"name": policy_path.name, "path": str(policy_path)}],
+            "mode": "single",
+            "path": str(policy_path),
+        }
 
     @app.put(
         "/api/policies",
@@ -616,6 +622,41 @@ def _register_user_routes(
         raise HTTPException(404, "user not found")
 
 
+def _no_change_response() -> dict[str, Any]:
+    """Response body for a config update with no effective changes."""
+    return {
+        "status": "ok",
+        "changed": [],
+        "restart_needed": False,
+        "message": "No changes detected",
+    }
+
+
+def _apply_secret_updates(gateway: RaucleGateway, req: ConfigUpdateRequest) -> list[str]:
+    """Apply secret fields excluded from update_from_dict. Returns changed names."""
+    applied: list[str] = []
+    if req.siem_token is not None:
+        gateway.config.siem_token = req.siem_token
+        gateway.siem.token = req.siem_token
+        applied.append("siem_token")
+    if req.health_check_token is not None:
+        gateway.config.health_check_token = req.health_check_token
+        applied.append("health_check_token")
+    return applied
+
+
+def _apply_runtime_siem(gateway: RaucleGateway, changed: list[str]) -> None:
+    """Push SIEM fields that can take effect without a restart."""
+    siem_fields = {
+        "siem_enabled": "enabled",
+        "siem_backend": "backend",
+        "siem_url": "url",
+    }
+    for cfg_field, siem_field in siem_fields.items():
+        if cfg_field in changed:
+            setattr(gateway.siem, siem_field, getattr(gateway.config, cfg_field))
+
+
 def _register_config_routes(
     app: FastAPI, gateway: RaucleGateway, check_auth: Any, check_access: Any
 ) -> None:
@@ -663,30 +704,13 @@ def _register_config_routes(
         user = check_auth(authorization)
         check_access(user, "config")
 
-        # Build updates dict from non-None fields
         updates = {k: v for k, v in req.model_dump().items() if v is not None}
-
         if not updates:
-            return {
-                "status": "ok",
-                "changed": [],
-                "restart_needed": False,
-                "message": "No changes detected",
-            }
+            return _no_change_response()
 
-        # Apply changes to the running config
         changed = gateway.config.update_from_dict(updates)
+        changed += _apply_secret_updates(gateway, req)
 
-        # Handle SIEM token separately (not in update_from_dict for security)
-        if req.siem_token is not None:
-            gateway.config.siem_token = req.siem_token
-            gateway.siem.token = req.siem_token
-            changed.append("siem_token")
-        if req.health_check_token is not None:
-            gateway.config.health_check_token = req.health_check_token
-            changed.append("health_check_token")
-
-        # Persist to YAML file
         try:
             gateway.config.save_to_yaml()
         except Exception as exc:
@@ -697,15 +721,7 @@ def _register_config_routes(
                 "warning": f"Config updated in memory but failed to persist: {exc}",
             }
 
-        # Apply runtime changes that can take effect immediately
-        if "siem_enabled" in changed:
-            gateway.siem.enabled = gateway.config.siem_enabled
-        if "siem_backend" in changed:
-            gateway.siem.backend = gateway.config.siem_backend
-        if "siem_url" in changed:
-            gateway.siem.url = gateway.config.siem_url
-        if "audit_persist" in changed:
-            pass  # takes effect on next connection log
+        _apply_runtime_siem(gateway, changed)
 
         restart_needed = any(
             f in changed for f in ("host", "port", "admin_port", "signer_backend", "kms_key_id")

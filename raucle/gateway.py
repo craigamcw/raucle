@@ -469,7 +469,8 @@ class RaucleGateway:
         self.siem = SIEMForwarder(config)
         self.users = UserManager()
         self._tokens: dict[str, Any] = {}  # tool_name -> Capability
-        self._policy_rules: dict[str, Any] = {}  # tool_name -> PolicyRule
+        self._policy_rules: dict[str, list[Any]] = {}  # tool_name -> [PolicyRule]
+        self._all_rules: list[Any] = []
         self._signer = None
         self._issuer: Any = None
         self._gate: Any = None
@@ -512,6 +513,56 @@ class RaucleGateway:
             trusted_issuers={self._issuer.key_id: self._issuer.public_key_pem}
         )
 
+    def _policy_files(self) -> list[Path]:
+        """Enumerate policy files from the configured file or directory."""
+        if self.config.policy_dir:
+            pdir = Path(self.config.policy_dir)
+            if pdir.is_dir():
+                return sorted(pdir.glob("*.yaml"))
+            logger.warning("Policy dir %s does not exist", pdir)
+            return []
+        pfile = Path(self.config.policy_file)
+        return [pfile] if pfile.exists() else []
+
+    def _load_rules(self, files: list[Path]) -> list[Any]:
+        """Load PolicyRules from each file, tagging each with its source file."""
+        from raucle.policy import PolicyFile
+
+        rules: list[Any] = []
+        for fpath in files:
+            try:
+                pf = PolicyFile.load(fpath)
+                for rule in pf.policies:
+                    rule.source_file = str(fpath)
+                rules.extend(pf.policies)
+                logger.info(
+                    "Loaded %d rules from %s (issuer=%s)",
+                    len(pf.policies),
+                    fpath.name,
+                    pf.issuer,
+                )
+            except Exception:
+                logger.exception("Failed to load %s", fpath)
+        return rules
+
+    def _index_rules(self, rules: list[Any]) -> None:
+        """Index rules by tool and mint one capability token per tool."""
+        self._policy_rules: dict[str, list[Any]] = {}
+        self._tokens: dict[str, Any] = {}
+        self._all_rules = rules
+
+        for rule in rules:
+            self._policy_rules.setdefault(rule.tool, []).append(rule)
+
+        for rule in rules:
+            if rule.tool in self._tokens:
+                continue
+            try:
+                kwargs = rule.to_mint_kwargs()
+                self._tokens[rule.tool] = self._issuer.mint(**kwargs)
+            except Exception:
+                logger.exception("Failed to mint token for %s", rule.tool)
+
     def _load_policies(self) -> None:
         """Load policies from a file or directory of YAML files.
 
@@ -522,70 +573,56 @@ class RaucleGateway:
         patterns. When a tool call arrives, the gateway finds the first
         matching rule (by source/destination) for that tool.
         """
-        from raucle.policy import PolicyFile
-
-        all_rules: list[Any] = []
-        files_to_load: list[Path] = []
-
-        if self.config.policy_dir:
-            pdir = Path(self.config.policy_dir)
-            if pdir.is_dir():
-                files_to_load = sorted(pdir.glob("*.yaml"))
-                if not files_to_load:
-                    logger.info("No YAML files in %s", pdir)
-            else:
-                logger.warning("Policy dir %s does not exist", pdir)
-        else:
-            pfile = Path(self.config.policy_file)
-            if pfile.exists():
-                files_to_load = [pfile]
-
-        if not files_to_load:
+        files = self._policy_files()
+        if not files:
             logger.info("No policy files found, running with no policies")
+            self._policy_rules = {}
+            self._tokens = {}
+            self._all_rules = []
             return
 
-        for fpath in files_to_load:
-            try:
-                pf = PolicyFile.load(fpath)
-                for rule in pf.policies:
-                    rule.source_file = str(fpath)
-                all_rules.extend(pf.policies)
-                logger.info(
-                    "Loaded %d rules from %s (issuer=%s)",
-                    len(pf.policies),
-                    fpath.name,
-                    pf.issuer,
-                )
-            except Exception as exc:
-                logger.error("Failed to load %s: %s", fpath, exc)
-
-        # Build token cache: mint a token for each unique (tool, source, destination) rule
-        self._policy_rules = {}
-        self._tokens = {}
-        self._all_rules = all_rules
-
-        for rule in all_rules:
-            # Key rules by tool for lookup, but we'll also match by source/destination
-            key = rule.tool
-            if key not in self._policy_rules:
-                self._policy_rules[key] = []
-            self._policy_rules[key].append(rule)
-
-        # Mint tokens for all rules
-        for rule in all_rules:
-            if rule.tool not in self._tokens:
-                try:
-                    kwargs = rule.to_mint_kwargs()
-                    self._tokens[rule.tool] = self._issuer.mint(**kwargs)
-                except Exception as exc:
-                    logger.error("Failed to mint token for %s: %s", rule.tool, exc)
+        rules = self._load_rules(files)
+        self._index_rules(rules)
 
         logger.info(
             "Total: %d rules across %d files, %d tools",
-            len(all_rules),
-            len(files_to_load),
+            len(rules),
+            len(files),
             len(self._tokens),
         )
+
+    def _deny_result(
+        self,
+        result: dict[str, Any],
+        reason: str,
+        start: float,
+        *,
+        siem: bool = True,
+    ) -> dict[str, Any]:
+        """Finalise a denied result: stats, optional SIEM, connection log."""
+        result["decision"] = "deny"
+        result["reason"] = reason
+        result["latency_us"] = int((time.perf_counter() - start) * 1e6)
+        self.stats.record(result["tool"], "deny", result["latency_us"])
+        if siem:
+            self.siem.forward(
+                {
+                    "event": "gate_decision",
+                    "tool": result["tool"],
+                    "decision": "deny",
+                    "reason": reason,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        self._log_connection(result)
+        return result
+
+    def _find_rule(self, tool: str, source: str, destination: str) -> Any:
+        """Find the first policy rule for *tool* matching source/destination."""
+        for rule in self._policy_rules.get(tool, []):
+            if rule.matches(source, destination):
+                return rule
+        return None
 
     def check_tool_call(
         self,
@@ -628,72 +665,33 @@ class RaucleGateway:
         }
 
         if tool not in self._policy_rules or tool not in self._tokens:
-            result["reason"] = f"no policy configured for tool '{tool}'"
-            self.stats.record(tool, "deny", int((time.perf_counter() - start) * 1e6))
-            self.siem.forward(
-                {
-                    "event": "gate_decision",
-                    "tool": tool,
-                    "decision": "deny",
-                    "reason": result["reason"],
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-            result["latency_us"] = int((time.perf_counter() - start) * 1e6)
-            self._log_connection(result)
-            return result
+            return self._deny_result(result, f"no policy configured for tool '{tool}'", start)
 
-        # Find the matching rule for this source/destination
-        rules_for_tool = self._policy_rules[tool]
-        matched_rule: Any = None
-        for rule in rules_for_tool:
-            if rule.matches(source, destination):
-                matched_rule = rule
-                break
-
+        matched_rule = self._find_rule(tool, source, destination)
         if matched_rule is None:
-            result["reason"] = (
+            return self._deny_result(
+                result,
                 f"no policy for tool '{tool}' matching "
-                f"source='{source}' destination='{destination}'"
+                f"source='{source}' destination='{destination}'",
+                start,
+                siem=False,
             )
-            self.stats.record(tool, "deny", int((time.perf_counter() - start) * 1e6))
-            result["latency_us"] = int((time.perf_counter() - start) * 1e6)
-            self._log_connection(result)
-            return result
 
-        # Re-mint token for the matched rule (in case constraints differ)
         token = self._tokens[tool]
         actual_agent_id = agent_id or matched_rule.agent_id
         result["policy"] = Path(matched_rule.source_file).name if matched_rule.source_file else tool
 
-        # Gate check
         decision = self._gate.check(
             token,
             tool=tool,
             agent_id=actual_agent_id,
             args=args,
         )
+        result["decision"], result["reason"] = self._apply_decision(decision, matched_rule, args)
 
-        if decision.allowed:
-            # Check if approval is needed
-            from raucle.policy import check_approval_needed
-
-            rule = matched_rule
-            if rule and check_approval_needed(rule, args):
-                result["decision"] = "escalate"
-                result["reason"] = "requires human approval"
-            else:
-                result["decision"] = "allow"
-                result["reason"] = decision.reason
-        else:
-            result["decision"] = "deny"
-            result["reason"] = decision.reason
-
-        # Record stats
         latency_us = int((time.perf_counter() - start) * 1e6)
         self.stats.record(tool, result["decision"], latency_us)
 
-        # Forward to SIEM
         self.siem.forward(
             {
                 "event": "gate_decision",
@@ -709,11 +707,23 @@ class RaucleGateway:
 
         result["latency_us"] = latency_us
         result["agent_id"] = actual_agent_id
-
-        # Log connection for admin panel
         self._log_connection(result)
-
         return result
+
+    @staticmethod
+    def _apply_decision(
+        decision: Any,
+        rule: Any,
+        args: dict[str, Any],
+    ) -> tuple[str, str]:
+        """Map a gate decision + approval threshold to (decision, reason)."""
+        if not decision.allowed:
+            return "deny", decision.reason
+        from raucle.policy import check_approval_needed
+
+        if rule is not None and check_approval_needed(rule, args):
+            return "escalate", "requires human approval"
+        return "allow", decision.reason
 
     def get_stats(self) -> dict[str, Any]:
         return self.stats.summary()

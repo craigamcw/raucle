@@ -166,49 +166,76 @@ def _validate_policy_content(content: str) -> dict[str, Any]:
         return {"valid": False, "error": str(exc)}
 
 
+def _check_auth(
+    users: UserManager,
+    authorization: str | None,
+    x_totp: str | None,
+) -> GatewayUser:
+    """Extract and validate the API key and optional TOTP code."""
+    if authorization is None:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    key = authorization
+    if key.startswith(_BEARER_PREFIX):
+        key = key[len(_BEARER_PREFIX) :]
+    user = users.get_user(key)
+    if user is None:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    if user.requires_mfa():
+        if not x_totp:
+            raise HTTPException(
+                status_code=401,
+                detail="MFA required: provide X-TOTP header with 6-digit code",
+            )
+        if not users.verify_totp(user, x_totp):
+            raise HTTPException(status_code=403, detail="Invalid TOTP code")
+    return user
+
+
+def _check_access(users: UserManager, user: GatewayUser, resource: str) -> None:
+    """Raise 403 unless the user's role may access *resource*."""
+    if not users.can_access(user.api_key, resource):
+        raise HTTPException(
+            status_code=403, detail=f"Role '{user.role}' cannot access '{resource}'"
+        )
+
+
 def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
-    """Create the admin panel app (operator-facing)."""
+    """Create the admin panel app (operator-facing).
+
+    Thin composition root: auth closures over *users*, then endpoint
+    groups are registered by dedicated module-level functions.
+    """
+
+    def check_auth(
+        authorization: str | None = Header(None),
+        x_totp: str | None = Header(None, alias="X-TOTP"),
+    ) -> GatewayUser:
+        return _check_auth(users, authorization, x_totp)
+
+    def check_access(user: GatewayUser, resource: str) -> None:
+        _check_access(users, user, resource)
+
     app = FastAPI(
         title="Raucle Gateway Admin",
         description="Enterprise admin panel for policy, stats, and config",
         version="0.1.0",
     )
 
-    def check_auth(
-        authorization: str | None = Header(None),
-        x_totp: str | None = Header(None, alias="X-TOTP"),
-    ) -> GatewayUser:
-        """Extract and validate the API key and optional TOTP code."""
-        if authorization is None:
-            raise HTTPException(status_code=401, detail="Missing Authorization header")
-        # Accept "Bearer <key>" or just "<key>"
-        key = authorization
-        if key.startswith(_BEARER_PREFIX):
-            key = key[len(_BEARER_PREFIX) :]
-        user = users.get_user(key)
-        if user is None:
-            raise HTTPException(status_code=403, detail="Invalid API key")
-        # MFA check
-        if user.requires_mfa():
-            if not x_totp:
-                raise HTTPException(
-                    status_code=401,
-                    detail="MFA required: provide X-TOTP header with 6-digit code",
-                )
-            if not users.verify_totp(user, x_totp):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Invalid TOTP code",
-                )
-        return user
+    _register_health_routes(app, gateway)
+    _register_stats_routes(app, gateway, check_auth, check_access)
+    _register_policy_routes(app, gateway, check_auth, check_access)
+    _register_receipt_routes(app, gateway, check_auth, check_access)
+    _register_siem_routes(app, gateway, check_auth, check_access)
+    _register_user_routes(app, gateway, users, check_auth, check_access)
+    _register_config_routes(app, gateway, check_auth, check_access)
+    _register_ui_routes(app)
 
-    def check_access(user: GatewayUser, resource: str) -> None:
-        if not users.can_access(user.api_key, resource):
-            raise HTTPException(
-                status_code=403, detail=f"Role '{user.role}' cannot access '{resource}'"
-            )
+    return app
 
-    # --- Health (optional auth via health_key) ---
+
+def _register_health_routes(app: FastAPI, gateway: RaucleGateway) -> None:
+    """Health endpoint (optional auth via health_check_token)."""
+
     @app.get("/health")
     def admin_health(authorization: str | None = Header(None)) -> dict[str, str]:
         if gateway.config.health_check_token:
@@ -221,7 +248,12 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
                 raise HTTPException(status_code=401, detail="Health check unauthorized")
         return {"status": "ok"}
 
-    # --- Dashboard / Stats ---
+
+def _register_stats_routes(
+    app: FastAPI, gateway: RaucleGateway, check_auth: Any, check_access: Any
+) -> None:
+    """Dashboard stats and the live connection log."""
+
     @app.get(
         "/api/stats",
         responses={
@@ -234,7 +266,6 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         check_access(user, "stats")
         return gateway.get_stats()
 
-    # --- Connections (live flow log) ---
     @app.get(
         "/api/connections",
         responses={
@@ -269,7 +300,12 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             ]
         return {"connections": connections[:limit], "count": len(connections)}
 
-    # --- Policy Management ---
+
+def _register_policy_routes(
+    app: FastAPI, gateway: RaucleGateway, check_auth: Any, check_access: Any
+) -> None:
+    """Policy file management (view, edit, validate, reload)."""
+
     @app.get(
         "/api/policies",
         responses={
@@ -380,7 +416,12 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         check_access(user, "policies")
         return _validate_policy_content(req.content)
 
-    # --- Receipts ---
+
+def _register_receipt_routes(
+    app: FastAPI, gateway: RaucleGateway, check_auth: Any, check_access: Any
+) -> None:
+    """Provenance receipt browsing."""
+
     @app.get(
         "/api/receipts",
         responses={
@@ -406,7 +447,12 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
                 receipts.append(json.loads(line))
         return {"receipts": receipts, "count": len(receipts), "total": len(lines)}
 
-    # --- SIEM Config ---
+
+def _register_siem_routes(
+    app: FastAPI, gateway: RaucleGateway, check_auth: Any, check_access: Any
+) -> None:
+    """SIEM forwarding configuration."""
+
     @app.get(
         "/api/siem",
         responses={
@@ -447,7 +493,12 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
         gateway.siem.token = req.token
         return {"status": "ok"}
 
-    # --- User Management (admin only) ---
+
+def _register_user_routes(
+    app: FastAPI, gateway: RaucleGateway, users: UserManager, check_auth: Any, check_access: Any
+) -> None:
+    """User management and TOTP MFA administration."""
+
     @app.get(
         "/api/users",
         responses={
@@ -498,7 +549,6 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             return {"status": "ok"}
         raise HTTPException(404, "user not found")
 
-    # --- MFA Management ---
     @app.post(
         "/api/users/{api_key}/mfa/setup",
         responses={
@@ -565,7 +615,12 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             return {"status": "ok", "mfa_enabled": False}
         raise HTTPException(404, "user not found")
 
-    # --- Config ---
+
+def _register_config_routes(
+    app: FastAPI, gateway: RaucleGateway, check_auth: Any, check_access: Any
+) -> None:
+    """Gateway configuration view and update."""
+
     @app.get("/api/config")
     def get_config(authorization: str | None = Header(None)) -> dict[str, Any]:
         user = check_auth(authorization)
@@ -664,7 +719,10 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
             else "No changes detected",
         }
 
-    # --- Admin Panel UI ---
+
+def _register_ui_routes(app: FastAPI) -> None:
+    """Admin panel and topology HTML pages."""
+
     @app.get("/", response_class=HTMLResponse)
     def admin_panel() -> str:
         return ADMIN_PANEL_HTML

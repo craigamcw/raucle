@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added — conformance re-verification layer (`raucle.conformance`)
+
+- Field-level Merkle commitments over call arguments (JCS-canonical leaves,
+  UTF-16 code-unit ordering, domain-separated SHA-256 throughout; the scheme
+  is deliberately zk-proof-system-portable).
+- Selective disclosure: the operator opens only the fields a verifier
+  requests, with Merkle paths; `verify_disclosure` fails closed on any
+  tamper or root mismatch.
+- Partial constraint re-check: per-constraint `SATISFIED` / `VIOLATED` /
+  `UNKNOWN` verdicts re-derived independently of the operator's runtime.
+  `UNKNOWN` is fail-closed and never counts as conformance.
+- Design document: `docs/spec/provenance/v1/conformance-reverification.md`
+  (Layer 1 of a three-layer roadmap; Layer 2 is a zkVM proof of the gate
+  check with zero disclosure).
+
+### Documentation
+
+- NCSC Cyber Assessment Framework (CAF v3.2) and NCSC ML-security-principles
+  control mapping: `docs/security/ncsc-caf-mapping.md`.
+- Repository URLs updated across docs, package metadata, reference ports,
+  and CI after the organisation move to `epic28-ltd/raucle`.
+- Paper (§5, §8, author's note): conformance layer, remote-key signing, and
+  policy-DSL gateway recorded as post-freeze engineering additions; the
+  evaluation's pre-registration scope is unchanged.
+
+
 ## 0.22.0 (2026-06-11) — package renamed: raucle-detect is now raucle
 
 The library outgrew "detect": receipts, provenance, the trust registry,
@@ -15,12 +43,12 @@ passports, and compliance evidence are the product; detection is one module.
   transition cycle.
 - **CLI**: `raucle` is the command; `raucle-detect` remains as a deprecated
   alias entry point.
-- **GitHub repo**: renamed to `craigamcw/raucle` immediately after this
+- **GitHub repo**: renamed to `epic28-ltd/raucle` immediately after this
   release merged (old URLs redirect).
 - **Env vars**: `RAUCLE_*` is the primary prefix; legacy `RAUCLE_DETECT_*`
   names remain supported.
 - **Go reference port** (breaking): the module path is now
-  `github.com/craigamcw/raucle/reference/provenance-go` — Go consumers must
+  `github.com/epic28-ltd/raucle/reference/provenance-go` — Go consumers must
   update import paths (Go modules cannot alias a renamed declared path).
 
 ### Unchanged — wire compatibility

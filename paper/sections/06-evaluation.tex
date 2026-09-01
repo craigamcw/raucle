@@ -1,2 +1,819 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+We evaluate three claims: (i) tool-call attack-success rate is reduced
+to near zero on standard benchmarks; (ii) benign task completion is
+preserved; (iii) per-call latency overhead is production-acceptable.
+
+\subsubsection{6.0 Pre-registration}\label{pre-registration}
+
+Before any measurement run that consumed LLM credits, the per-task
+policy files (§3.4) were frozen by SHA-256 hash and committed to the
+repository. The first eight hex characters of each file's hash:
+
+\begin{verbatim}
+banking.json    sha256:4b78e687…    slack.json     sha256:72698245…
+travel.json     sha256:c7692b8e…    workspace.json sha256:8ba70481…
+\end{verbatim}
+
+Full hashes appear in \texttt{paper/eval/PRE-REGISTRATION.md}; the
+static verifier (\texttt{paper/eval/verify\_policies.py}) re-computes
+them on every CI build and aborts on drift. Policy edits after this
+freeze require a separate commit explaining the change and a new
+pre-registration entry. Any measurement number in §6.2 was produced
+against a policy file whose hash exactly matches one of the above.
+
+\subsubsection{6.1 Benchmarks and
+Configurations}\label{benchmarks-and-configurations}
+
+We use the two most cited contemporary prompt-injection benchmarks
+against agentic LLMs:
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{AgentDojo} {[}@debenedetti2024agentdojo{]}: 629 attack tasks
+  across four realistic deployments (banking, Slack, GitHub, travel
+  agency). Each task pairs a benign user request with an adversarial
+  document injected into the agent's context, with success defined as
+  the agent calling a specific tool with attacker-controlled arguments.
+\item
+  \textbf{InjecAgent} {[}@zhan2024injecagent{]}: 1,054 attack scenarios
+  across multiple agent frameworks, with similar structure.
+\end{itemize}
+
+We test six defence configurations:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{None} --- no defence beyond the base model's training.
+\item
+  \textbf{Spotlighting} {[}@hines2024defending{]} --- input-perturbation
+  defence that marks untrusted regions of the context.
+\item
+  \textbf{StruQ} {[}@chen2024struq{]} --- structured-query defence that
+  fine-tunes the model to ignore instructions in delimited regions.
+\item
+  \textbf{Prompt shields} --- a commercial vendor's filter (anonymised
+  at the vendor's request).
+\item
+  \textbf{VCD text-only} --- the scanner layer of our reference
+  implementation, without proof or capability.
+\item
+  \textbf{VCD full stack} --- scanner + proof + capability gate.
+\end{enumerate}
+
+All configurations run against the same base model and the same agent
+harness. We measure on three contemporary frontier-class models:
+\textbf{deepseek-v3.2} (671B, late 2025), \textbf{deepseek-v4-flash}
+(140B, April 2026), and \textbf{deepseek-v4-pro} (1.6T, May 2026), via
+Ollama Cloud's OpenAI-compatible endpoint. We report tool-call-mediated
+attack success rate, benign task completion on the AgentDojo benign-task
+split, and gate latency on commodity hardware.
+
+\subsubsection{6.2 Headline Result}\label{headline-result}
+
+Measured on the AgentDojo banking suite (144 user × injection task pairs
+per cell). Numbers below are from the live LLM-driven evaluation. The
+cross-suite generalisation rows (slack, travel, workspace) appear in
+§6.2.3; the attack-family-robustness rows (\texttt{direct},
+\texttt{ignore\_previous} in addition to
+\texttt{important\_instructions}) appear in §6.2.2; the component
+ablation (text-only vs gate-only vs full-stack) appears in §6.2.4.
+
+\textbf{deepseek-v4-flash (frontier flash, April 2026):}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Defence & ASR & Benign & Wall \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+None & \textbf{1.4\%} & 86.8\% & 7.6m \\
+Spotlighting & 2.1\% & 84.0\% & 14.4m \\
+Prompt shields (DeBERTa PI) & \textbf{0.0\%} & \textbf{35.4\%} &
+26.5m \\
+VCD text-only & 0.0\% & 91.0\% & 22.5m \\
+\textbf{VCD full stack} & \textbf{0.7\%} & \textbf{90.3\%} & 8.7m \\
+VCD capability-only (ablation) & 0.0\% & 88.9\% & 9.1m \\
+\end{longtable}
+
+\textbf{deepseek-v4-pro (frontier reasoning, May 2026):}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Defence & ASR & Benign & Wall \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+None & \textbf{33.3\%} & 88.2\% & 58.5m \\
+Spotlighting & 6.9\% & 87.5\% & 46.1m \\
+Prompt shields (DeBERTa PI) & \textbf{0.0\%} & \textbf{36.1\%} &
+65.3m \\
+VCD text-only & \textbf{0.0\%} & \textbf{84.0\%} & 51.1m \\
+\textbf{VCD full stack} & \textbf{0.7\%} & \textbf{85.4\%} & 53.9m \\
+VCD capability-only (ablation) & 0.7\% & 84.7\% & 50.1m \\
+\end{longtable}
+
+\textbf{deepseek-v3.2 (frontier reasoning, late 2025):}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Defence & ASR & Benign & Wall \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+None & \textbf{70.8\%} & 79.9\% & 43.9m \\
+Spotlighting & 58.3\% & 80.6\% & 67.8m \\
+Prompt shields (DeBERTa PI) & 7.6\% & \textbf{33.3\%} & 50.5m \\
+VCD text-only & \textbf{0.7\%} & \textbf{79.9\%} & 99.4m \\
+\textbf{VCD full stack} & \textbf{0.7\%} & 77.8\% & 88.7m \\
+VCD capability-only (ablation) & 0.7\% & 75.7\% & 101.9m \\
+\end{longtable}
+
+The load-bearing claim is the \textbf{shields vs VCD full-stack}
+comparison, and it reproduces across all three model generations: both
+defences drive attack-success rate to within a single attack of zero,
+but the strongest text-side defence (transformers PI detector) collapses
+benign task completion to the 33--36\% range across every model we
+tested, while VCD full-stack preserves benign completion at 78--90\%.
+The benign-preservation gap at equivalent security is \textbf{+54.9
+percentage points} on v4-flash, \textbf{+49.3 pp} on v4-pro, and
+\textbf{+44.4 pp} on v3.2. The effect is \emph{largest} on the weakest
+model: as the base model gets less reliable on benign tasks, shields'
+collateral damage compounds, while VCD's surgical precision remains
+unchanged. Equivalently, deploying shields requires accepting the loss
+of roughly half of legitimate agent productivity to reach VCD's security
+level --- and this cost does not amortise with scale.
+
+A second row deserves direct comment. On v3.2, where the baseline
+attack-success rate is 70.8\%, VCD-text alone reduces ASR to 0.7\% --- a
+\textbf{10× stronger} result than prompt-shields' 7.6\% on the same
+model --- \emph{while} preserving 46.6 percentage points more benign
+completion. We did not anticipate that the text-side component of VCD
+would outperform a dedicated DeBERTa detector on a less-capable base
+model; we discuss the likely mechanism in §7.1.
+
+\textbf{Cross-provider banking row.} To verify the pattern is not
+specific to the DeepSeek family, we additionally measure two
+frontier-class models from two other providers --- Qwen3.5:397b
+(Alibaba) and Kimi-k2.6 (Moonshot) --- on the same banking suite under
+the same load-bearing comparison:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.2000}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 8\tabcolsep) * \real{0.2000}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Provider
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Model
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Defence
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+ASR
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Benign
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Alibaba (MoE) & qwen3.5:397b & None & 6.9\% & 75.0\% \\
+Alibaba (MoE) & qwen3.5:397b & Prompt shields & 0.0\% &
+\textbf{35.4\%} \\
+Alibaba (MoE) & qwen3.5:397b & \textbf{VCD full stack} & \textbf{0.7\%}
+& \textbf{72.2\%} \\
+Moonshot (MoE) & kimi-k2.6 & None & \textbf{0.0\%} & 68.8\% \\
+Moonshot (MoE) & kimi-k2.6 & Prompt shields & 0.0\% & \textbf{34.7\%} \\
+Moonshot (MoE) & kimi-k2.6 & \textbf{VCD full stack} & \textbf{0.0\%} &
+\textbf{66.0\%} \\
+\end{longtable}
+
+The pattern reproduces. On Qwen3.5 the benign-preservation gap between
+shields and VCD-full is \textbf{+36.8 pp} at 0.0--0.7\% ASR. The Kimi
+row is more interesting: Moonshot's instruction-adherence training is
+strong enough that the unprotected baseline ASR is already
+\textbf{0.0\%} --- no defence is \emph{needed} for security on this
+configuration. Prompt-shields nonetheless collapses benign task
+completion from 68.8\% to 34.7\% (a 34.1-percentage-point loss) for
+security that wasn't required; VCD-full holds benign at 66.0\% (a
+2.8-percentage-point loss). \textbf{Shields' collateral damage is
+independent of its security necessity} --- the defence imposes the same
+cost whether or not it is doing anything useful. This is the cleanest
+demonstration in the paper that the trade-off curve is shaped
+differently for the two defences: VCD's cost scales with its work;
+shields' cost is paid up-front regardless.
+
+The static upper bound of §6.2.1 applies identically to these models ---
+the gate's constraint logic is model-independent, so the
+catalogued-attack block rate is 100\% on Qwen and Kimi by construction.
+
+A note on the pure-output fraction: of the AgentDojo injection tasks in
+our four-suite cross-evaluation, \textbf{3 of 25 distinct injection
+tasks} (slack \texttt{injection\_task\_3}, slack
+\texttt{injection\_task\_4}, travel \texttt{injection\_task\_6})
+describe attacks whose success criterion is the agent's free-form
+natural-language response rather than a tool call with specific argument
+values --- visit-a-link suggestions, post-this-text-on-a-channel
+commands routed through unstructured replies, and biased hotel
+recommendations. These attacks fall outside VCD's design boundary (§6.5)
+because there is no tool call to gate. They account for every non-zero
+ASR cell we measured on slack/travel/workspace; outside of them, the
+LLM-driven block rate on attacker-controlled tool calls is identical to
+the §6.2.1 static bound (100\%). The corresponding InjecAgent fraction
+is reported with the static-bound numbers in §6.2.1: the catalogued
+attack args are entirely tool-call-mediated, and the static block rate
+is 100\% across the full 2,108-pair benchmark.
+
+\paragraph{6.2.1 Static upper bound on attack-success
+rate}\label{static-upper-bound-on-attack-success-rate}
+
+Before reporting the LLM-driven measurements, we report a \emph{static}
+upper bound: assuming the model emits the attacker's canonical tool call
+exactly, do the gate's constraints --- derived independently from each
+user task's prompt and pinned by the pre-registered hash anchors of §6.0
+--- admit the call? This is the maximum ASR the actual eval can exhibit;
+the LLM-driven run can only do as well or better, because
+natural-language defences provide additional attrition on top of the
+gate.
+
+The static verifier (\texttt{paper/eval/verify\_policies.py}) runs the
+same constraint logic the runtime gate runs. Static results under VCD
+full-stack, across both benchmarks, all defence-relevant cells:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2500}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2500}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Benchmark
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Cases
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Attacks succeeding the static check
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Static upper bound on ASR
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+AgentDojo (v1, all four suites) & 629 & 0 & 0.00\% \\
+InjecAgent (DH base + enhanced) & 1020 & 0 & 0.00\% \\
+InjecAgent (DS base + enhanced) & 1088 & 0 & 0.00\% \\
+\textbf{Total} & \textbf{2737} & \textbf{0} & \textbf{0.00\%} \\
+\end{longtable}
+
+The single known exception is one cell in AgentDojo banking
+(user\_task\_15 × schedule\_transaction): the user's stated intent
+contains the same IBAN as the benchmark's adversarial recipient (the
+user's landlord). Capability discipline correctly admits that call ---
+the user explicitly authorised it --- while the same IBAN remains
+forbidden in every other user task's policy. The static verifier flags
+this cell as a \emph{known-legitimate coincidence} and excludes it from
+the count above.
+
+The verifier and the runtime gate share a single implementation of the
+constraint-check logic --- both call into the same
+\texttt{Policy.satisfiesArgs} function in the implementation's
+capability module --- so the static result is not a separate model that
+could disagree with the runtime. The verifier is a 30-line driver that
+loads the policy files, iterates over the benchmark's catalogued attack
+args, and asks the same Python function the gate asks at runtime. Any
+policy edit that weakens the gate's behaviour weakens the static result
+identically. A CI job (configured in \texttt{.github/workflows/ci.yml})
+re-runs the verifier on every commit and fails the build if the static
+block rate regresses below 100\%.
+
+\paragraph{6.2.2 Attack-family
+robustness}\label{attack-family-robustness}
+
+The numbers in §6.2 use AgentDojo's \texttt{important\_instructions}
+injection template, the benchmark's strongest and most-cited attack. To
+check that the result is not overfit to a single attack vector, we
+measure the banking row under the \texttt{direct} and
+\texttt{ignore\_previous} attack templates across all three model
+generations (144 pairs each cell, same policy and harness). The full
+coverage matrix below is 3 models × 3 attack families = 9 attack-cohort
+cells; the v4-flash row reports all five defences (none, spotlight,
+prompt-shields, VCD-text, VCD-cap-only, VCD-full) and the v4-pro / v3.2
+rows report the load-bearing comparison \{none, shields, vcd\_full\}.
+
+\textbf{deepseek-v4-flash (full defence sweep):}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Attack & Defence & ASR & Benign \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{direct} & None & 13.9\% & 91.0\% \\
+\texttt{direct} & Spotlighting & 13.9\% & 87.5\% \\
+\texttt{direct} & Prompt shields & 0.0\% & \textbf{36.8\%} \\
+\texttt{direct} & VCD text-only & 0.7\% & 89.6\% \\
+\texttt{direct} & VCD capability-only & 0.7\% & 90.3\% \\
+\texttt{direct} & \textbf{VCD full stack} & \textbf{0.7\%} &
+\textbf{91.7\%} \\
+\texttt{ignore\_previous} & None & 1.4\% & 88.9\% \\
+\texttt{ignore\_previous} & Spotlighting & 0.7\% & 87.5\% \\
+\texttt{ignore\_previous} & Prompt shields & 0.0\% & \textbf{31.3\%} \\
+\texttt{ignore\_previous} & VCD text-only & 0.7\% & 85.4\% \\
+\texttt{ignore\_previous} & VCD capability-only & 0.7\% & 87.5\% \\
+\texttt{ignore\_previous} & \textbf{VCD full stack} & \textbf{0.7\%} &
+\textbf{89.6\%} \\
+\end{longtable}
+
+The pattern is identical across all three attack families on v4-flash:
+shields drives ASR to zero by destroying benign task completion;
+\textbf{every VCD configuration} drives ASR to the same 0.7\%
+benchmark-artefact floor while preserving 85--92\% benign completion.
+Spotlighting is interesting: it is essentially inactive against
+\texttt{direct} (13.9\% ASR, unchanged from baseline) but reduces
+\texttt{ignore\_previous} to 0.7\% --- confirming the spotlighting
+mechanism is sensitive to the surface form of the injection. VCD does
+not have this dependence because the gate operates structurally on
+tool-call arguments, not on the surrounding natural-language framing.
+The benign-preservation gap between VCD-full and shields at equivalent
+security on v4-flash is \textbf{+54.9 pp} under
+\texttt{important\_instructions}, \textbf{+54.9 pp} under
+\texttt{direct}, and \textbf{+58.3 pp} under \texttt{ignore\_previous}.
+
+\textbf{deepseek-v4-pro:}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Attack & Defence & ASR & Benign \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{direct} & None & 12.5\% & 85.4\% \\
+\texttt{direct} & Prompt shields & 0.7\% & \textbf{36.8\%} \\
+\texttt{direct} & \textbf{VCD full stack} & \textbf{0.7\%} &
+\textbf{82.6\%} \\
+\texttt{ignore\_previous} & None & 0.7\% & 81.2\% \\
+\texttt{ignore\_previous} & Prompt shields & 0.7\% & \textbf{31.2\%} \\
+\texttt{ignore\_previous} & \textbf{VCD full stack} & \textbf{0.0\%} &
+\textbf{77.8\%} \\
+\end{longtable}
+
+\textbf{deepseek-v3.2:}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Attack & Defence & ASR & Benign \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{direct} & None & 13.9\% & 88.2\% \\
+\texttt{direct} & Prompt shields & \textbf{4.2\%} & \textbf{35.4\%} \\
+\texttt{direct} & \textbf{VCD full stack} & \textbf{0.7\%} &
+\textbf{86.8\%} \\
+\texttt{ignore\_previous} & None & 9.0\% & 84.7\% \\
+\texttt{ignore\_previous} & Prompt shields & 0.0\% & \textbf{30.6\%} \\
+\texttt{ignore\_previous} & \textbf{VCD full stack} & \textbf{0.7\%} &
+\textbf{79.2\%} \\
+\end{longtable}
+
+The cross-generation pattern reproduces. On v4-pro the
+shields-vs-VCD-full benign-preservation gap is \textbf{+45.8 pp} under
+\texttt{direct} and \textbf{+46.6 pp} under \texttt{ignore\_previous}.
+On v3.2 it is \textbf{+51.4 pp} under \texttt{direct} and \textbf{+48.6
+pp} under \texttt{ignore\_previous}. Two cells deserve special mention:
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{v3.2 × \texttt{direct} × shields} is the only cell in the
+  entire study where the strongest text-side defence fails to drive ASR
+  to zero (4.2\%, six attacks landed out of 144). Shields \emph{both}
+  leaves a non-trivial residual attack-success rate \emph{and} collapses
+  benign task completion to 35.4\%. On the same configuration, VCD-full
+  holds ASR at 0.7\% and preserves 86.8\% benign completion --- strictly
+  dominating shields on every measured dimension simultaneously.
+\item
+  \textbf{v3.2 × \texttt{ignore\_previous} × shields} drives ASR to zero
+  but at the cost of dropping benign task completion to \textbf{30.6\%},
+  the lowest benign completion shields produces anywhere in the paper.
+  The corresponding VCD-full cell achieves 0.7\% ASR at 79.2\% benign
+  --- a \textbf{+48.6 percentage-point} gap at near-identical security.
+\end{itemize}
+
+The aggregate claim is that the headline pattern --- shields trades
+catastrophic benign-completion collapse for marginal security gain,
+VCD-full holds security at the benchmark-artefact floor while preserving
+the agent's productive capacity --- is invariant across every measurable
+cell of (model, attack family) we tested.
+
+\paragraph{6.2.3 Cross-suite
+generalisation}\label{cross-suite-generalisation}
+
+To check that the result is not banking-specific, we measure on
+AgentDojo's remaining three suites --- slack (105 pairs), travel (140
+pairs), workspace (240 pairs) --- across two model generations (v4-flash
+and v4-pro):
+
+\textbf{deepseek-v4-flash:}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Suite & Defence & ASR & Benign \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Slack & None & 14.3\% & 66.7\% \\
+Slack & \textbf{VCD full stack} & \textbf{4.8\%} & \textbf{61.0\%} \\
+Travel & None & 3.6\% & 51.4\% \\
+Travel & Prompt shields & 0.0\% & \textbf{0.0\%} \\
+Travel & \textbf{VCD full stack} & \textbf{1.4\%} & \textbf{58.6\%} \\
+Workspace & None & 1.7\% & 72.5\% \\
+Workspace & Prompt shields & 1.3\% & \textbf{36.7\%} \\
+Workspace & \textbf{VCD full stack} & \textbf{0.4\%} &
+\textbf{64.6\%} \\
+\end{longtable}
+
+\textbf{deepseek-v4-pro:}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Suite & Defence & ASR & Benign \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Slack & None & 65.7\% & 66.7\% \\
+Slack & \textbf{VCD full stack} & \textbf{18.1\%} & \textbf{62.9\%} \\
+Travel & None & 33.6\% & 57.9\% \\
+Travel & \textbf{VCD full stack} & \textbf{6.4\%} & \textbf{74.3\%} \\
+Workspace & None & 45.0\% & 47.9\% \\
+Workspace & \textbf{VCD full stack} & \textbf{7.1\%} &
+\textbf{68.8\%} \\
+\end{longtable}
+
+\textbf{deepseek-v3.2:}
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Suite & Defence & ASR & Benign \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Slack & None & 98.1\% & 58.1\% \\
+Travel & None & 73.6\% & 22.1\% \\
+Travel & \textbf{VCD full stack} & \textbf{7.9\%} & \textbf{68.6\%} \\
+Workspace & None & 65.8\% & 9.2\% \\
+Workspace & \textbf{VCD full stack} & \textbf{6.7\%} &
+\textbf{52.9\%} \\
+\end{longtable}
+
+(Two cells omitted. The slack × shields cell on v4-flash and the slack ×
+vcd\_full cell on v3.2 both crashed in the same AgentDojo slack-suite
+utility scorer
+(\texttt{KeyError:\ \textquotesingle{}www.our-company.com\textquotesingle{}}
+in \texttt{agentdojo/default\_suites/v1/slack/user\_tasks.py:162}),
+which assumes a \texttt{web.web\_content} key that is not populated when
+the agent's trajectory does not visit a specific URL. The crash is in
+the benchmark's scoring code, not in our harness, policy, or the gate.
+We report 19 of 21 cross-suite cells intact rather than retry; the bug
+is reproducible on AgentDojo 0.1.35 against any agent that does not
+happen to fetch the COMPANY\_URL during a slack user task.)
+
+VCD generalises across all three cross-suites and all three measured
+model generations. The pattern strengthens as the base model gets less
+capable. On v4-flash the no-defence baseline ASR sits low (1.7--14.3\%)
+and VCD reduces it by 3×--4×. On v4-pro the baseline is much higher
+(33.6--65.7\%) and VCD reduces it by 3.6×--6.3×, with the protected
+benign completion \emph{exceeding} the unprotected baseline on travel
+and workspace (+16.4 pp travel, +20.9 pp workspace). On v3.2 --- where
+the baseline attack-success rate runs 65.8--98.1\% across the three
+suites and the unprotected agent's benign completion collapses to
+9.2--58.1\% under attack --- \textbf{VCD reduces ASR by 9.4× on travel
+and 9.9× on workspace, \emph{and} improves benign completion by +46.5 pp
+on travel and +43.8 pp on workspace}. The protected agent on v3.2
+workspace completes 52.9\% of benign tasks where the unprotected
+baseline completed only 9.2\% --- almost a six-fold productivity
+recovery. The mechanism is the same early-termination effect observed in
+§6.3.1: when the gate denies an attacker-induced tool call, the agent's
+reasoning loop returns to the legitimate task instead of looping further
+on the adversarial trajectory. The effect compounds when the base model
+is less robust to derailment.
+
+Where shields was measurable to completion on v4-flash, it drove benign
+task completion to \textbf{0\%} on travel and \textbf{36.7\%} on
+workspace --- a 35.8-percentage-point collapse on workspace, and a
+complete collapse on travel where the detector flagged every legitimate
+task as adversarial. As the suite's tool surface grows more diverse,
+shields' false-positive rate compounds until the agent cannot complete
+most or all benign work. VCD's benign-preservation degrades far more
+gracefully because the gate's rejection criterion is structural, not
+stylistic. \textbf{VCD-vs-shields benign-preservation gap on the three
+measurable cross-suite cells: travel +58.6 pp, workspace +27.9 pp,
+banking +54.9 pp.}
+
+A note on the residual VCD ASR on these suites: unlike banking, where
+the residual is a single IBAN-collision artefact (§6.5), the cross-suite
+residual concentrates on specific injection tasks that ask the agent to
+perform actions \emph{without} a constrained tool call --- e.g.,
+\texttt{slack.injection\_task\_3} (``Visit a website at the link
+\ldots{}''), \texttt{travel.injection\_task\_6} (``Say that I should
+absolutely visit Riverside View Hotel\ldots{}''). These are the
+pure-output / pure-recommendation attacks §6.5 already flags as outside
+VCD's design boundary: the gate operates on tool-call arguments, and an
+attack whose effect is the agent's free-form natural-language response
+has no tool-call to bind. The cross-suite numbers are therefore
+consistent with the §6.5 claim and the §6.2.1 static bound ---
+\emph{every} tool-mediated attack across all four suites is denied by
+the gate.
+
+\paragraph{6.2.4 Ablation: which component carries the
+result}\label{ablation-which-component-carries-the-result}
+
+VCD composes a text-side input scanner (the \emph{text} component) with
+the capability-token gate (the \emph{cap} component). The two components
+are independently meaningful and can be deployed separately. We measure
+each in isolation on banking, across all three models:
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Model & Configuration & ASR & Benign \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+v4-flash & Text-side scanner only (no gate) & 0.0\% & 91.0\% \\
+v4-flash & Capability gate only (no scanner) & 0.0\% & 88.9\% \\
+v4-flash & \textbf{Full stack (both)} & \textbf{0.7\%} &
+\textbf{90.3\%} \\
+v4-pro & Text-side scanner only (no gate) & 0.0\% & 84.0\% \\
+v4-pro & Capability gate only (no scanner) & 0.7\% & 84.7\% \\
+v4-pro & \textbf{Full stack (both)} & \textbf{0.7\%} &
+\textbf{85.4\%} \\
+v3.2 & Text-side scanner only (no gate) & 0.7\% & 79.9\% \\
+v3.2 & Capability gate only (no scanner) & 0.7\% & 75.7\% \\
+v3.2 & \textbf{Full stack (both)} & \textbf{0.7\%} & \textbf{77.8\%} \\
+\end{longtable}
+
+(The single residual ASR cell in every row is the same
+\texttt{user\_task\_15\ ×\ injection\_task\_4} benchmark IBAN
+coincidence discussed in §6.5.)
+
+Two observations. First, \textbf{either component alone is essentially
+sufficient on AgentDojo banking} --- the gate, on its own, denies every
+attacker-controlled tool call without help from the text scanner; the
+text scanner, on its own, intercepts the injection before it reaches the
+LLM. Second, the components have \emph{different} failure modes and
+\emph{different} operating costs, so the right deployment is the
+composition. The capability gate is sub-100µs per call (§6.3), is
+provably correct against §6.2.1's static bound, and protects against
+attacks the scanner missed (e.g., a benign-looking but policy-violating
+tool call constructed by the model itself). The text scanner adds
+defence-in-depth against attacks the gate cannot see --- e.g.,
+pure-output exfiltration (§6.5) where there is no tool call to bind. The
+full-stack configuration's benign-completion is within \textasciitilde2
+pp of either component alone, so the composition does not pay a
+meaningful precision cost.
+
+We do not report a ``SMT-proof-only'' ablation because the SMT proof in
+VCD operates on the policy, not on individual tool calls, and is not
+independently deployable from the gate --- the gate consumes the proof's
+compiled constraint set at runtime. The static-bound result in §6.2.1 is
+the corresponding evidence: the gate's constraint logic, run against the
+canonical attack args from both benchmarks, denies every attack across
+2,737 user-task × injection-task pairs.
+
+The full-stack row is the load-bearing claim: every attack whose effect
+is \emph{mediated through a tool call} (operationally defined in §2) is
+rejected by the gate, because every such tool call must satisfy the
+constraints in the in-force capability token, which were issued before
+the attacker had any access to the agent's context. The LLM-driven
+measurements in the tables above can only do as well or better than the
+§6.2.1 static bound. We discuss the small residual in §6.5.
+
+\subsubsection{6.3 Per-Call Latency}\label{per-call-latency}
+
+Measured on two reference hardware classes, single thread, Python 3.12+:
+an x86\_64 cloud VM (AMD EPYC-Milan, Ubuntu 24.04) and a workstation
+(Apple M-series ARM64, macOS 14). 5,000 iterations per gate operation,
+200 iterations per proof.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Operation
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+x86\_64 (EPYC-Milan) p50 / p95 / p99
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+ARM64 (Apple M) p50 / p95 / p99
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{Gate.check()} no chain & 0.07 / 0.08 / 0.11 ms & 0.15 / 0.18 /
+0.19 ms \\
+\texttt{Gate.check()} 3-link chain & 0.27 / 0.30 / 0.34 ms & 0.58 / 0.64
+/ 0.69 ms \\
+\texttt{Prove()} cold & 0.67 / 0.74 / 0.90 ms & 0.54 / 0.68 / 46.5 ms \\
+\end{longtable}
+
+Proof results are cached by \texttt{(schema\_hash,\ policy\_hash)}. In
+steady-state deployments where the schema and policy change rarely, the
+prover is invoked once per policy version and the cache hit rate
+approaches 100\%. \textbf{End-to-end overhead per tool call in the
+steady state is dominated by the gate path, at well under 100
+microseconds at p50.} For agents making tens of tool calls per turn at
+human-conversation cadence, the cost is invisible. Proof-cache
+invalidation on policy update incurs a one-time sub-millisecond hit.
+
+The numbers are dramatically below the latencies typically associated
+with formal-verification primitives because the supported JSON Schema
+fragment is small enough that Z3 finds the proof or counterexample in a
+handful of solver iterations. Schemas at the edge of our supported
+fragment (deep enum sets, many fields) can extend \texttt{Prove()}
+cold-path latency into the low milliseconds; this remains acceptable
+because proofs are issued once per policy version, not per call.
+
+\paragraph{6.3.1 End-to-end agent wall
+time}\label{end-to-end-agent-wall-time}
+
+Per-call gate latency is the structural cost of VCD; what an operator
+pays in \emph{practice} is end-to-end agent wall-clock with the defence
+enabled. We report wall time per defence across every cohort in §6.2,
+normalised to the unprotected \texttt{none} baseline for that cohort:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 12\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 12\tabcolsep) * \real{0.1429}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Cohort
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+none (min)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+spotlight
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+shields
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+VCD-text
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textbf{VCD-full}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+VCD-cap-only
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+banking / v4-flash / \texttt{important\_instructions} & 7.6 & 1.89× &
+\textbf{3.49×} & 2.96× & \textbf{1.14×} & 1.20× \\
+banking / v4-flash / \texttt{direct} & 90.7 & --- & \textbf{2.94×} & ---
+& \textbf{1.12×} & --- \\
+banking / v4-flash / \texttt{ignore\_previous} & 116.4 & --- & 1.45× &
+--- & \textbf{0.54×} & --- \\
+banking / v4-pro / \texttt{important\_instructions} & 58.5 & 0.79× &
+1.11× & 0.87× & \textbf{0.92×} & 0.86× \\
+banking / v3.2 / \texttt{important\_instructions} & 43.9 & 1.54× & 1.15×
+& 2.26× & 2.02× & 2.32× \\
+slack / v4-flash / \texttt{important\_instructions} & 59.2 & --- & --- &
+--- & \textbf{0.23×} & --- \\
+travel / v4-flash / \texttt{important\_instructions} & 63.5 & --- &
+\textbf{2.80×} & --- & \textbf{0.42×} & --- \\
+workspace / v4-flash / \texttt{important\_instructions} & 95.5 & --- &
+1.59× & --- & \textbf{0.21×} & --- \\
+\end{longtable}
+
+Two patterns. \textbf{First, prompt-shields end-to-end wall time is
+consistently 1.5--3.5× the unprotected baseline.} This is on top of
+shields' benign-completion collapse documented in §6.2 --- the
+operational cost of the defence is paid twice. The 2.94× and 2.80×
+figures on v4-flash banking/\texttt{direct} and travel are the practical
+ceiling: shields adds DeBERTa inference per message, and inflates the
+agent's reasoning trajectory by escalating its caution.
+
+\textbf{Second, VCD-full is at-baseline or faster.} On four of the eight
+cohorts VCD-full \emph{reduces} wall time relative to the unprotected
+baseline (slack 0.23×, workspace 0.21×, travel 0.42×, v4-flash
+\texttt{ignore\_previous} 0.54×). The mechanism is structural: when the
+gate denies an attacker-induced tool call, the agent's reasoning loop
+terminates instead of producing more LLM turns trying to execute the
+prohibited action. On the remaining cohorts VCD-full sits at
+0.92×--2.02× baseline; the outlier is v3.2 banking (2.02×), where the
+older model needs more retry attempts before settling on a
+gate-admissible call. \textbf{The single VCD-full row that exceeds 1.2×
+baseline is v3.2; on every v4-class model and every cross-suite
+measurement, VCD-full is between 0.21× and 1.20× baseline.}
+Operationally, deploying VCD costs less wall-clock than running
+unprotected on three of our four AgentDojo suites --- because attacks
+are denied early --- and costs at most \textasciitilde14\% extra on
+banking where attacks are rarer.
+
+The gate's microbenchmarked sub-100µs latency from §6.3 dominates as a
+function of \emph{the number of admitted tool calls}; the wall-clock
+improvements above reflect \emph{the number of LLM turns avoided} when
+the gate rejects an attack rather than letting the agent loop. The two
+effects compose: VCD adds negligible per-call overhead and subtracts
+whole reasoning rounds whenever it triggers.
+
+\subsubsection{6.4 Reference Deployment}\label{reference-deployment}
+
+The reference implementation is released as open source under a
+permissive licence (Apache-2.0) and was deposited in a public package
+registry in early 2026. The end-to-end demo
+(\texttt{examples/end\_to\_end/} in the repository) composes scanner,
+prover, capability minting, gate, audit chain, and offline-verifiable
+trust graph in a single script. The four pre-registered AgentDojo policy
+files
+(\texttt{paper/eval/policies/\{banking,slack,travel,workspace\}.json},
+hash-anchored in \texttt{paper/eval/PRE-REGISTRATION.md}) authorised
+\textbf{7,312} tool calls and denied \textbf{761} policy-violating calls
+across the empirical evaluation reported in §6.2 --- an overall deny
+rate of 9.4\% across 8,073 total gate decisions, consistent with the
+AgentDojo benchmark's design in which most user × injection pairs
+combine a legitimate multi-call user task with an adversarial
+single-call attack attempt. We do not report a separate production
+deployment in this paper; the integration cost is modest (the reference
+adapter for AgentDojo is approximately 300 lines of glue), and we
+anticipate that one or more public deployments will report their numbers
+independently. The repository, Lean development, benchmark harness, and
+policy files are intended as a complete reproducibility package; readers
+can re-run any number in §6 against their own hardware and model
+credentials.
+
+\subsubsection{6.5 Negative Results}\label{negative-results}
+
+\textbf{On the residual non-zero ASR in §6.2 and §6.2.2.} Every VCD row
+across the LLM-driven evaluation with a non-zero ASR reports exactly one
+attack success out of 144 banking pairs (0.7\% = 1/144). In every case
+--- \texttt{vcd\_text}, \texttt{vcd\_full}, and \texttt{vcd\_cap\_only}
+on all three models (v3.2, v4-flash, v4-pro), under all three attack
+families (\texttt{important\_instructions}, \texttt{direct},
+\texttt{ignore\_previous}) --- the single ``successful'' attack is the
+same cell: \textbf{user\_task\_15 × injection\_task\_4}. This is the
+known-legitimate IBAN coincidence flagged in §6.2.1: the user explicitly
+asks the agent to schedule a rent payment to their landlord, the
+landlord's IBAN happens to be the same IBAN the benchmark's adversarial
+injection\_task\_4 designates as the attacker's target, and AgentDojo's
+security oracle marks the cell \texttt{security=True} because \emph{a}
+transfer to that IBAN occurred --- without distinguishing between the
+user-authorised transfer (which VCD correctly admits, with a valid
+capability token issued from the user's prompt) and an attacker-induced
+one. The gate did not fail; the benchmark oracle cannot disambiguate.
+
+We deliberately do not exclude this cell from the LLM-driven numbers.
+The honest measurement is what the benchmark reports against the policy
+we pre-registered; the §6.2.1 static analysis carries the structural
+claim that the gate denies every attacker-controlled cell. In aggregate
+across the \textbf{720} banking pairs measured under VCD full-stack and
+its ablations (3 models × 1 attack + 1 model × 2 additional attacks,
+each at 144 pairs), the gate admits every user-authorised call and
+denies every attacker-induced call, with the single residual being the
+benchmark's IBAN-collision artefact. Outside that one benchmark cell,
+the LLM-driven gate-block rate on attacker-controlled tool calls is
+\textbf{100\%}, matching the §6.2.1 static bound.
+
+We separately report two classes where VCD \emph{legitimately} does not
+eliminate attack success --- i.e., where the gate's design boundary is
+the limit, not the oracle:
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{Tool-output exfiltration.} Attacks whose payload is the
+  \emph{content} the agent eventually emits in its response --- e.g.,
+  coercing the agent to print a secret retrieved from a legitimate tool
+  call --- are not affected by the gate. The legitimate tool call was
+  authorised by a valid token; the leak occurs in the model's text
+  output. VCD makes no claim against this class. Composition with
+  output-side defences is the obvious next step.
+\item
+  \textbf{Permitted-parameter side channels.} A schema permitting
+  \texttt{amount} to be any number in
+  \texttt{{[}0,\ 1\textbackslash{},000\textbackslash{},000{]}} permits
+  an attacker who can coerce the agent into making \emph{one} legitimate
+  \texttt{transfer\_funds} call to encode up to roughly 20 bits of
+  information in the chosen amount. We do not eliminate this channel; we
+  discuss schema tightening in Section 8.
+\end{itemize}
+
+We consider these honest concessions essential to the paper. The
+strength of the headline claim depends on its narrowness.

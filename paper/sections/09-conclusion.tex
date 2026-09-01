@@ -1,2 +1,172 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+Prompt injection has been treated for four years as a problem of
+robustifying the model against natural-language attack inputs. That
+framing is structurally bounded by the open-grammar nature of the input
+surface; the empirical ceiling on text-side defences against
+state-of-the-art benchmarks sits at 14-31\% attack success rate.
+
+We have argued that the consequential half of an agent's behaviour
+passes through a much narrower interface, that the interface is bounded
+enough to admit cryptographic and proof-based enforcement, and that the
+resulting composition --- SMT-verified policy completeness over the JSON
+Schema, Ed25519-signed capability tokens with mechanised attenuation
+invariants, gate enforcement on the only path to tool execution ---
+eliminates the tool-call-mediated prompt-injection class. The cost is
+well under 100 microseconds per call on commodity hardware and the
+effort of authoring a schema and a policy per tool.
+
+The deeper claim is that the trajectory of AI security must be to move
+enforcement boundaries out of the model and into structural gates
+wherever the grammar permits. Tool calls are the easiest such boundary;
+database queries, generated code, and structured outputs admit similar
+treatment. The thesis of this paper, generalised, is that the
+prompt-injection problem becomes tractable exactly when one stops trying
+to solve it inside the model.
+
+The reference implementation, Lean development, and benchmark harness
+are released as open source under a permissive licence (Apache-2.0) and
+available at \texttt{{[}anonymised{]}}.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{References}\label{references}
+
+\emph{Bibliography in \texttt{paper/references.bib}. Three entries
+marked \texttt{\%\%\ UNVERIFIED} need a final check against published
+proceedings before camera-ready.}
+
+\begin{itemize}
+\tightlist
+\item
+  Anthropic. Constitutional Classifiers. 2024.
+\item
+  Backes, J. et al.~Semantic-based automated reasoning for AWS access
+  policies using SMT (Zelkova). FMCAD 2018.
+\item
+  Birgisson, A. et al.~Macaroons: cookies with contextual caveats. NDSS
+  2014.
+\item
+  Chen, S. et al.~StruQ: defending against prompt injection with
+  structured queries. USENIX Sec 2024.
+\item
+  de Moura, L. and Bjørner, N. Z3: an efficient SMT solver. TACAS 2008.
+\item
+  de Moura, L. and Ullrich, S. The Lean 4 theorem prover and programming
+  language. CADE 2021.
+\item
+  Debenedetti, E. et al.~AgentDojo: dynamic environment for attacks and
+  defences for LLM agents. NeurIPS 2024.
+\item
+  Erbsen, A. et al.~Simple high-level code for cryptographic arithmetic,
+  with proofs (Fiat-Crypto). S\&P 2019.
+\item
+  Fisler, K. et al.~The Margrave tool for firewall analysis. ICSE 2005.
+\item
+  Greshake, K. et al.~Not what you've signed up for: indirect prompt
+  injection in LLM-integrated applications. AISec 2023.
+\item
+  Hines, K. et al.~Defending against indirect prompt injection with
+  spotlighting. arXiv 2024.
+\item
+  Klein, G. et al.~seL4: formal verification of an OS kernel. SOSP 2009.
+\item
+  Levy, H. Capability-based computer systems. Digital Press 1984.
+\item
+  mathlib community. mathlib4: a library of mathematics for Lean 4.
+  2024.
+\item
+  Miller, M. Robust composition: a unified approach to access control
+  and concurrency control. PhD thesis, 2006.
+\item
+  Newman, Z. et al.~Sigstore: software signing for everybody. CCS 2022.
+\item
+  Perez, F. and Ribeiro, I. Ignore previous prompt: attack techniques
+  for language models. arXiv 2022.
+\item
+  PyCA. The cryptography library. https://cryptography.io
+\item
+  Samuel, J. et al.~Survivable key compromise in software update
+  systems. CCS 2010.
+\item
+  Shapiro, J. et al.~EROS: a fast capability system. SOSP 1999.
+\item
+  Torres-Arias, S. et al.~in-toto: farm-to-table guarantees for bits and
+  bytes. USENIX Sec 2019.
+\item
+  Zhan, Q. et al.~InjecAgent: benchmarking indirect prompt injections in
+  tool-integrated LLM agents. ACL Findings 2024.
+\end{itemize}
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\subsection{Author's note on remaining pre-submission
+work}\label{authors-note-on-remaining-pre-submission-work}
+
+Most \texttt{{[}TBD{]}} markers from the 2026-05-14 draft have been
+resolved over the 2026-05-15 → 2026-05-17 empirical sweep (see
+\texttt{paper/eval/runs/README.md} for the run history). The remaining
+items before camera-ready:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{InjecAgent LLM-driven measurement.} §6.2.1's static bound
+  (0/2108) is in hand and is the structural claim. An LLM-driven run on
+  InjecAgent would parallel the §6.2/§6.2.2/§6.2.3 AgentDojo evidence
+  and is in flight as compute becomes available.
+\item
+  \textbf{A closed-frontier model row.} All measured base models are
+  open-weight: DeepSeek (v3.2 / v4-flash / v4-pro, MoE), Alibaba
+  (Qwen3.5:397b, MoE), Moonshot (Kimi-k2.6, MoE) --- five model
+  identities from three providers, reported in §6.2. A Claude or GPT row
+  would broaden the architectural diversity claim to include a
+  closed-frontier provider and at least one non-MoE architecture. Gated
+  on third-party credit grants (next decision cycle: 2026-06-01). We
+  additionally attempted Mistral-large-3:675b (dense) and Gemma3:27b
+  (Google) as substitutes; neither model is presently served on the
+  Ollama Cloud tier we use for inference, so both attempts surfaced as
+  \texttt{APIStatusError} rejections rather than measurements. We report
+  this honestly rather than substitute a third-party-hosted alternative
+  whose throughput and stochasticity we cannot equate to the rest of the
+  harness.
+\item
+  \textbf{StruQ defence row.} StruQ requires fine-tuning the base model
+  and is not a config flip in the AgentDojo harness; whether to attempt
+  it before submission is a feasibility judgement.
+\item
+  \textbf{Anonymisation for double-blind submission --- applied.}
+  Product name, module names, licence specifics, and publication dates
+  softened to category-level descriptors in the body of the paper. The
+  author block in \texttt{paper/main.tex} was anonymised on the day the
+  LaTeX shell was created. Camera-ready de-anonymisation reverts to the
+  \texttt{pre-anon} git tag's state of the affected files ---
+  five-minute mechanical operation.
+\item
+  \textbf{Final pass for figure references and citation keys.}
+  Bracket-style placeholders in the bibliography need replacing with the
+  venue's chosen citation style.
+\end{enumerate}
+
+The empirical evidence base --- three generations of one open-weight
+family on banking × six defences (complete), \textbf{three} generations
+on three cross-suites × \{none, vcd\_full\} (19 of 21 cells; the two
+omitted cells crashed in an AgentDojo slack-suite utility-scorer bug),
+\textbf{three} generations on three attack families × \{none, shields,
+vcd\_full\} (with full defence sweep on v4-flash), two additional
+providers (Qwen3.5, Kimi-k2.6) on banking × \{none, shields,
+vcd\_full\}, 8,073 logged gate decisions, 720 LLM-driven banking attack
+attempts at 100\% gate-block rate outside one benchmark coincidence
+cell, and full ablation across the two VCD components --- is settled.
+
+\textbf{2026-09-01 addendum.} Since the empirical freeze, the reference
+implementation gained three engineering components described in §5: the
+policy-DSL gateway (network enforcement point with
+per-agent/per-source/per-destination rules), remote-key signing (AWS KMS
+/ Azure Key Vault / HashiCorp Vault Transit), and the conformance
+re-verification layer (field-level Merkle commitments with selective
+disclosure). None of these affects the measured claims: the gate, token,
+and proof semantics are unchanged, and §6's numbers were produced
+against the frozen pre-registration hashes. The gateway and conformance
+layers are engineering contributions reported for completeness; the
+paper's evaluation claims remain scoped to the gate + receipt core that
+the empirical freeze covered.

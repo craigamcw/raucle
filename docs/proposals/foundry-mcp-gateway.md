@@ -171,7 +171,7 @@ resource sidecar 'Microsoft.App/containerApps@2025-01-01' = {
       containers: [
         {
           name: 'raucle'
-          image: 'ghcr.io/craigamcw/raucle:latest'  # pin to a release tag in production
+          image: 'ghcr.io/epic28-ltd/raucle:latest'  # pin to a release tag in production
           env: [
             { name: 'RAUCLE_BACKEND_URL',        value: mcpBackendUrl }
             { name: 'RAUCLE_ISSUER_KEY_VAULT',   value: '...'        }

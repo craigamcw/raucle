@@ -1,2 +1,100 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+The reference implementation is an open-source library cited as
+\texttt{{[}anonymised\ for\ blind\ review{]}}. Approximately 12,000
+lines of Python implement the runtime (the SMT prover, capability
+issuance and the gate, provenance receipts and chain verification, the
+modelled-language registry described below, the audit chain, the
+policy-DSL gateway, remote-key signing, and the conformance
+re-verification layer described below); an additional \textasciitilde430
+lines of Lean 4 contain the formal development. The implementation
+depends on Z3 (Python bindings) and the audited \texttt{cryptography}
+library for Ed25519. No new cryptographic primitives are introduced.
+
+Several engineering decisions warrant comment.
+
+\textbf{Modelled-language registry.} The set of constructs the system
+reasons about --- capability constraint kinds, JSON-Schema keywords, the
+URL and SQL grammar/policy surfaces, and the provenance chain-envelope
+fields --- is enumerated in a single executable registry. Both the
+runtime and the test suite derive their allow-lists from it, and a
+continuous-integration drift test fails if any consumer's modelled set
+diverges from the registry. This makes fail-closed behaviour a
+\emph{structural} property rather than a coding convention: a construct
+absent from the registry hits its dimension's conservative verdict by
+construction. An unmodelled schema keyword, policy key, URL key, or SQL
+construct downgrades a would-be \texttt{PROVEN} to \texttt{UNDECIDED};
+an unknown capability constraint kind is rejected at mint; an unknown
+chain-envelope field is rejected at verification. The registry is the
+structural mechanism behind Theorem 2's ``modelled constraint kinds''
+qualifier: the gate cannot silently enforce, or fail to enforce, a kind
+the model does not name.
+
+\textbf{Canonical JSON.} All hashes and signature inputs use a
+canonical-JSON serialisation --- sorted keys, no whitespace, UTF-8
+encoded, \texttt{ensure\_ascii=False} --- so that the same logical
+object always produces the same bytes. This avoids signature-mismatch
+failures that bedevil deployments where serialisation order varies
+across implementations. The canonical form is a restricted JCS subset:
+integers only (floats are rejected rather than serialised, because
+cross-implementation float canonicalisation is the one genuinely hard
+part of JCS), bounded to the JavaScript safe-integer range so that every
+value round-trips byte-identically across all five reference
+implementations (Python, TypeScript, Go, Rust, C\#). A conformance
+harness checks byte-identity on emit and verify across the five; the
+provenance chain envelope is the minimal
+\texttt{\{receipt\_hash,\ jws\}} pair, with the signed payload carried
+inside the JWS rather than duplicated --- and trusted --- in the
+envelope.
+
+\textbf{Fail-closed defaults.} The gate raises rather than returning
+ALLOW on any internal error. The prover returns \texttt{UNDECIDED}
+(treated as a failure mode by downstream consumers) rather than
+\texttt{PROVEN} on solver timeout. The principle is applied uniformly on
+every verification boundary: unmodelled inputs map to the conservative
+verdict above, a token that cites a parent it cannot resolve is denied
+rather than trusted, and verification paths reject non-conforming input
+rather than warning-and-accepting it. We observed in early integration
+testing that these defaults catch a class of misconfiguration bugs --- a
+missing pubkey in the trusted-issuer map, a corrupted token on disk ---
+that fail-open defaults would silently mask.
+
+\textbf{Out-of-process gate.} Although the gate can run as a Python
+library function in the same address space as the agent runtime, the
+recommended deployment runs it as a separate process behind a Unix
+socket or local HTTPS endpoint, with the issuer key held by an HSM. This
+separation provides defence-in-depth: an LLM-driven RCE in the agent
+runtime cannot directly mint or modify tokens.
+
+\textbf{Content-addressed everything.} Tokens, proof artifacts,
+audit-chain leaves, and feed entries (where used in a larger deployment)
+are all content-addressed, allowing cross-reference by hash without
+needing a central registry.
+
+\textbf{Conformance re-verification with selective disclosure.} The gate
+records \texttt{args\_hash\ =\ SHA-256(canonical(args))} in each
+receipt, so a third-party verifier can confirm signatures, cited schema
+and proof hashes, and chain integrity offline --- but cannot confirm
+that \emph{this specific call's arguments} satisfied the policy without
+the operator disclosing raw arguments. The conformance re-verification
+layer closes this gap for auditable subsets. Call arguments are
+committed as a Merkle tree over their top-level fields; leaves hash the
+field name and the JCS-canonical encoding of the value; ordering follows
+UTF-16 code-unit order, matching the canonicalisation discipline proven
+cross-language for receipt bodies. The operator discloses only
+constraint-relevant fields (with Merkle paths); the verifier recomputes
+and re-derives per-constraint SATISFIED / VIOLATED / UNKNOWN verdicts
+independently of the operator's runtime, failing closed on any
+undisclosed field. All hashing is SHA-256, chosen deliberately because
+it is the well-trodden path in zk proof systems: the scheme ports to a
+zkVM (Layer 2) without exotic primitives.
+
+\textbf{Remote-key signing.} In production the issuer key need not live
+in a local HSM: the signer abstraction routes Ed25519 operations to AWS
+KMS, Azure Key Vault, or HashiCorp Vault Transit, so the key material
+never leaves the remote service. The token, proof, and audit artefacts
+are unchanged; only the signing substrate differs. The gate is agnostic
+to which signer minted a token, provided its \texttt{key\_id} is in the
+trusted-issuer map.
+
+The codebase is released under a permissive open-source licence
+(Apache-2.0); the Lean development will be released alongside
+camera-ready acceptance.

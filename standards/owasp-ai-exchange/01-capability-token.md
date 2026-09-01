@@ -142,7 +142,7 @@ No new cryptographic primitives are introduced.
 
 ## Reference implementation
 
-Apache-2.0 Python implementation in [github.com/craigamcw/raucle](https://github.com/craigamcw/raucle), file `raucle/capability.py`. ~280 lines. Test suite covers signing, expiry, tampering, every attenuation invariant, full chain verification, and serialisation round-trips. Lean 4 mechanisation of the attenuation and gate-soundness theorems lives in `paper/lean/`.
+Apache-2.0 Python implementation in [github.com/epic28-ltd/raucle](https://github.com/epic28-ltd/raucle), file `raucle/capability.py`. ~280 lines. Test suite covers signing, expiry, tampering, every attenuation invariant, full chain verification, and serialisation round-trips. Lean 4 mechanisation of the attenuation and gate-soundness theorems lives in `paper/lean/`.
 
 ## Interoperability test vectors
 

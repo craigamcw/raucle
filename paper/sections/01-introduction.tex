@@ -1,2 +1,151 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+Large language model agents now mediate billions of tool calls per day
+across customer support, financial services, software engineering, and
+clinical workflows. Every one of those calls is the output of a
+stochastic system whose input surface is, by construction, the open set
+of all natural language. Four years of work on prompt-injection defence
+has converged on a stable observation: text-side defences against
+text-side attacks improve attack-success rates from catastrophic to
+merely poor. The strongest published results in 2024-2026 ---
+Spotlighting {[}@hines2024defending{]}, StruQ {[}@chen2024struq{]},
+constitutional classifiers {[}@anthropic2024constitutional{]}, and the
+suite of commercial prompt-shield products --- reduce the AgentDojo
+{[}@debenedetti2024agentdojo{]} and InjecAgent {[}@zhan2024injecagent{]}
+attack success rate (ASR) from a no-defence baseline of roughly half to
+between 14\% and 31\%. Half of one in three attempts still succeeds.
+
+The diagnosis we offer is that the defences are operating in the wrong
+shape of problem. Verifying properties of unbounded natural language is
+open; the agent's downstream effect on the world, however, is mediated
+almost entirely through a much narrower interface. Every modern agent
+framework --- OpenAI function-calling, Anthropic tool use, the Model
+Context Protocol, AutoGen, and LangChain among them --- requires tools
+to declare structured input grammars, typically JSON Schema. Over those
+grammars the set of well-formed strings is bounded, the propositions one
+wants to enforce are decidable, and the enforcement point can be moved
+out of the model entirely.
+
+This paper presents Verified Capability Discipline (VCD), a composition
+of three primitives that together provide \textbf{portable,
+cryptographically-verifiable authorisation} for LLM agent tool calls. We
+use SMT to prove that a tool's security policy is satisfied over every
+string its JSON Schema permits, or to extract a concrete counterexample
+call. We bind the proven policy into an Ed25519-signed capability token
+whose attenuation primitives mechanically forbid permission broadening.
+We place a gate on the only path from agent intent to tool execution and
+require every call to carry a token whose constraints are satisfied by
+the actual call arguments. The artefact a deployment produces --- the
+\emph{capability receipt}, a signed record citing the issuer, the schema
+hash, the policy proof hash, the Lean theorem identifier, the
+attenuation chain, and a hash of the actual call arguments --- is
+portable across organisations, clouds, and trust boundaries, and is the
+kind of evidence that regulators, internal auditors, and downstream tool
+implementations can independently verify without sharing a secret with
+the issuer.
+
+We frame the contribution as authorisation rather than defence
+deliberately. The prompt-injection literature has spent five years
+asking whether the \emph{model} can be made robust to adversarial input;
+in parallel, model-side advances such as instruction/data embedding
+separation (ASIDE {[}@zverev2025aside{]}) and preference-aligned
+training (SecAlign {[}@chen2025secalign{]}) are pushing baseline ASRs
+downward at the model layer, and 2026's hyperscaler-bundled
+prompt-shield products advertise the same goal. The defensive landscape
+is converging. The authorisation question is orthogonal and remains
+open: even when the model is robust, an agent acting in regulated
+environments must produce a portable, auditable record of \emph{what it
+was authorised to do, by whom, against what verified policy, and what it
+actually did}. VCD's primitives are the first published combination ---
+SMT-verified policy completeness, Lean-mechanised attenuation soundness,
+content-addressed signed capabilities --- that produces such a record.
+The empirical attack-success reduction we report against contemporary
+prompt-injection benchmarks is a strong demonstration that the
+authorisation layer is also a competitive defence; the durable
+contribution is the artefact.
+
+The contribution is neither the SMT verification nor the capability
+discipline taken alone --- both have decades of prior art that we
+discuss in Section 7 --- but the specific composition, the empirical
+demonstration that it holds against state-of-the-art prompt-injection
+benchmarks at production-acceptable latency, and the production of a
+portable cryptographic audit primitive. We mechanise three soundness
+theorems in Lean 4, evaluate against AgentDojo
+{[}@debenedetti2024agentdojo{]} and InjecAgent {[}@zhan2024injecagent{]}
+alongside contemporary text-side defences (Spotlighting
+{[}@hines2024defending{]}, Microsoft Prompt Shields), and release the
+reference implementation, Lean development, and benchmark harness as
+open source under a permissive licence (Apache-2.0).
+
+Our principal claims are:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{Structural enforcement.} If the gate returns ALLOW for a tool
+  call, the call arguments satisfy every constraint in a valid
+  descendant of a capability token signed by a pinned issuer; absent
+  compromise of the issuer's private key, no agent input ---
+  natural-language or otherwise --- can produce an ALLOW for arguments
+  that violate the policy.
+\item
+  \textbf{Provable policy completeness.} Given a tool's JSON Schema in a
+  supported fragment, the prover terminates with either a proof that no
+  string in the schema's language violates the policy, or a concrete
+  counterexample call.
+\item
+  \textbf{Portable audit primitive.} Every gate decision produces a
+  \emph{capability receipt}: a content-addressed, Ed25519-signed record
+  citing the issuer's public key, the verified JSON Schema, the cited
+  policy proof, the Lean soundness theorem id, the full attenuation
+  chain, and the call argument hash. The receipt is verifiable by any
+  third party --- including downstream tool implementations, partner
+  organisations, and external auditors --- without sharing a secret with
+  the issuer. To our knowledge, no prior agent-security work produces an
+  artefact with this combination of properties.
+\item
+  \textbf{Empirical attack-success reduction.} Across three
+  frontier-class open-weight models (deepseek-v3.2, deepseek-v4-flash,
+  deepseek-v4-pro), three attack families
+  (\texttt{important\_instructions}, \texttt{direct},
+  \texttt{ignore\_previous}), and four AgentDojo task suites (banking,
+  slack, travel, workspace), VCD reduces the tool-call-mediated
+  attack-success rate from a no-defence baseline of \textbf{1.4--70.8\%}
+  to a benchmark-artefact floor of \textbf{0.0--0.7\%}, while preserving
+  \textbf{58.6--91.0\%} benign task completion. The strongest
+  contemporary text-side defence we compared (prompt-shields,
+  DeBERTa-based PI detector) achieves equivalent ASR but collapses
+  benign task completion to \textbf{0.0--36.7\%} on the same cells --- a
+  \textbf{+27.9 to +58.6 percentage-point} benign-preservation gap at
+  equivalent security. A static upper bound (§6.2.1) establishes that
+  the gate's constraint logic denies every catalogued attack across both
+  benchmarks' 2,737 user-task × injection-task pairs. Every non-zero
+  LLM-driven ASR cell we report (720 banking attempts) maps to the same
+  \texttt{user\_task\_15\ ×\ injection\_task\_4} IBAN-coincidence
+  benchmark artefact in which the user's authorised tool call
+  legitimately matches the attacker's adversarial target; outside that
+  single cell, the LLM-driven gate-block rate on attacker-controlled
+  tool calls is \textbf{100\%}. Per-call gate latency is well under 100
+  microseconds at p50 on commodity hardware, and end-to-end agent wall
+  time with VCD enabled is at or below the unprotected baseline on four
+  of eight cohorts measured (§6.3.1).
+\end{enumerate}
+
+We argue in Section 9 that VCD does not solve prompt injection ---
+free-form output attacks and side-channel exfiltration over allowed
+parameters are out of scope --- but that it closes the dominant attack
+class, and that the trajectory of AI security must be to move
+enforcement boundaries out of the model and into structural gates
+wherever the grammar permits.
+
+We adopt the convention throughout this paper of being conspicuously
+honest about the boundary of our claims. Section 2 enumerates the
+out-of-scope attack classes; Section 6.5 reports the configurations in
+which VCD did \emph{not} eliminate attack success. The narrowness of the
+claim is what makes it credible.
+
+The remainder of this paper is organised as follows. Section 2 fixes the
+threat model. Section 3 describes the three primitives and their
+composition. Section 4 states and sketches the three soundness theorems.
+Section 5 describes the implementation. Section 6 reports the empirical
+evaluation. Section 7 places VCD in the related literature. Section 8
+discusses limitations.

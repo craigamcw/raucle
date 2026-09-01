@@ -1,2 +1,113 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+We mechanise three theorems in Lean 4 {[}LEA{]}. The full development
+lives in \texttt{paper/lean/}; we sketch the statements and proof
+structure here.
+
+Let \(\Sigma\) denote the set of well-formed JSON objects under a fixed
+schema \(S\) in the supported fragment, and \(\Pi\) the set of policies
+in the supported policy fragment. Let \(\text{Tok}\) denote the type of
+capability tokens, \(\Pi_\text{tok}: \text{Tok} \to \Pi\) the projection
+from a token to its constraint set, and
+\(\text{Verify}: \text{Tok} \times \mathcal{K} \to \{0, 1\}\) Ed25519
+verification under a public key.
+
+\textbf{Theorem 1 (Attenuation Soundness).} \emph{For all
+\(p, c : \text{Tok}\), if \(c\) is in the image of
+\(\text{attenuate}(p, \cdot)\), then for every constraint kind \(k\) and
+every field \(f\), the narrowing relation \(\sqsubseteq_k\) holds
+between \(\Pi_\text{tok}(c)|_{k,f}\) and \(\Pi_\text{tok}(p)|_{k,f}\),
+and \(c.\text{expires\_at} \le p.\text{expires\_at}\).}
+
+The proof proceeds by case analysis on \(k\). For each constraint kind,
+\texttt{attenuate}'s implementation is shown to compute the appropriate
+lattice meet (intersection, union, min, max). Because each operation is
+monotone in the lattice, \(\sqsubseteq_k\) is preserved by definition.
+The lifetime bound follows from the explicit guard in \texttt{attenuate}
+that returns \texttt{none} when
+\(c.\text{expires\_at} > p.\text{expires\_at}\). The Lean development is
+approximately 105 lines and compiles cleanly under Mathlib v4.10.0.
+
+\textbf{Theorem 2 (Gate Soundness).} \emph{For all \(t : \text{Tok}\),
+all tools \(T\), and all argument bindings \(a\), if
+\(\text{Gate.check}(t, T, a) = \text{ALLOW}\) under trusted-issuer set
+\(\mathcal{K}\), then: (i) \(t.\text{tool} = T\); (ii) every constraint
+of the kinds modelled in the development --- \texttt{allowed\_values},
+\texttt{forbidden\_values}, \texttt{max\_value}, \texttt{min\_value},
+and \texttt{required\_present} --- in \(\Pi_\text{tok}(t)\) is satisfied
+by \(a\); (iii) the signature on \(t\) verifies under some
+\(k \in \mathcal{K}\); (iv)
+\(t.\text{token\_id} = \text{cap:}\Vert\text{SHA256}(\text{canon}(t.\text{body}))\).}
+
+The proof is a direct case analysis on the gate checks. Each check, if
+it returned ALLOW, established the corresponding postcondition. The
+pre-image analysis is mechanical. The Lean development is approximately
+95 lines and compiles cleanly.
+
+\textbf{Scope of the mechanised constraint vocabulary.} The Lean
+\texttt{Policy} models the five constraint kinds named in clause (ii).
+The reference implementation's runtime gate enforces four further kinds
+--- \texttt{starts\_with}, \texttt{forbidden\_field\_combinations},
+dot-delimited \texttt{agent\_id} descendant scope, and a revocation
+denylist --- together with token expiry and issuer pinning. These are
+covered by the implementation's test suite but are \textbf{not} part of
+the Lean model; extending the mechanisation to them is future work. We
+therefore state Theorem 2 over the modelled vocabulary and do not claim
+mechanised soundness for the four runtime-only kinds.
+
+\textbf{Theorem 3 (Policy-Proof Composition).} \emph{Let \(S\) be a
+schema, \(P\) a policy, and \(\rho\) a proof artifact for \((S, P)\)
+with \(\rho.\text{status} = \text{PROVEN}\). Then for every argument
+binding \(a\) that conforms to \(S\) and is accepted by the gate under a
+token \(t\) ---
+i.e.~\(\text{Gate.check}(t, t.\text{tool}, a) = \text{ALLOW}\) --- both:
+(i) \(a\) satisfies \(P\); and (ii) \(a\) satisfies \(t\)'s own
+constraints.}
+
+What the mechanised proof establishes, precisely. Clause (i) is
+discharged by an explicit \textbf{prover-soundness axiom} standing for
+the Z3 oracle: it states that a \texttt{PROVEN} artifact for \((S, P)\)
+certifies \(\Sigma \cap \neg P = \emptyset\) --- every schema-conforming
+assignment satisfies \(P\) --- so \(a\)'s schema conformance yields
+\(a \models P\) directly. This axiom is \textbf{load-bearing} in the
+proof of clause (i) (it is applied, not merely recorded). Clause (ii) is
+discharged independently from gate soundness (Theorem 2). What is
+deliberately \emph{not} mechanised: that the proof \(\rho\) pertains to
+this tool's \((S, P)\) and that \(t\) cites it --- the
+\(\text{policy\_proof\_hash} \leftrightarrow\) grammar/policy-hash
+binding --- is enforced operationally by the gate's strict proof mode
+(\texttt{\_check\_proof\_binding} in the reference implementation) and
+is taken as a hypothesis of the theorem rather than re-derived from
+hashes in Lean. This is the design intent: the SMT solver (via the
+axiom), not Lean, certifies policy completeness; the runtime gate checks
+the citation. Consequently the mechanised result is strongest when
+strict proof mode is enabled --- the default gate mode treats
+\texttt{policy\_proof\_hash} as informational and does not enforce the
+binding. The Lean development for this theorem is approximately 130
+lines. The full development --- the shared data model plus Theorems 1--3
+--- is approximately 430 lines of Lean 4 and compiles under Mathlib
+v4.10.0 with no \texttt{sorry}s.
+
+We are honest about what the Lean development does and does not
+establish. It mechanises the \emph{attenuation and gate logic at the
+level of the abstract data model}. It does not mechanise the bit-level
+correctness of the Ed25519 implementation (we rely on Erbsen et al.'s
+verified field-arithmetic for Curve25519/Ed25519 {[}erbsen2019simple{]}
+and the audited \texttt{cryptography} library {[}PYCA{]}) nor the
+bit-level correctness of Z3 (we treat the SMT solver as a trusted oracle
+whose \texttt{unsat} results we accept; in practice a \texttt{PROVEN}
+result from Z3 should be cross-validated against a second
+implementation, a step we have added to the reference codebase).
+
+The mechanisation depends on three explicit cryptographic-oracle
+assumptions, all standard. (i) \textbf{Ed25519 unforgeability under
+chosen-message attack:} the only way to produce a valid signature over a
+body is to know the corresponding private key. Theorem 2's conclusion
+that the verifying public key is in the trusted set rests on this. (ii)
+\textbf{SHA-256 collision resistance:} no two distinct canonical bodies
+hash to the same \texttt{token\_id}. Theorem 2's identifier-binding
+check rests on this. (iii) \textbf{\texttt{canonBody} determinism:} the
+canonical-JSON serialisation produces the same byte sequence for every
+logically-equivalent body across implementations and Python versions.
+Our canonicalisation uses sorted keys, no whitespace, UTF-8 encoding,
+and \texttt{ensure\_ascii=False}; we treat this as an oracle property
+and recommend deployments cross-validate the canonical encoding against
+a second implementation at boot.

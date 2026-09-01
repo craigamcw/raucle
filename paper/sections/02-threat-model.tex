@@ -1,2 +1,94 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+We adopt the standard agentic-LLM adversary model from Greshake et al.
+{[}@greshake2023not{]} and Debenedetti et al.
+{[}@debenedetti2024agentdojo{]}, with explicit cryptographic
+assumptions.
+
+\textbf{Adversary capabilities.} The adversary controls any untrusted
+input the agent ingests: the user message, the contents of RAG-retrieved
+documents, the output of any third-party tool whose result is fed back
+into the agent's context, web pages the agent browses, and email or chat
+messages the agent reads. The adversary observes the agent's system
+prompt, the list of tools available to the agent, the JSON Schema of
+every tool, and --- in our most pessimistic configuration --- the
+constraint policy carried by the capability token in force at the time
+of the attack. The adversary cannot forge Ed25519 signatures, cannot
+compromise the issuer's private signing key, cannot execute code inside
+the gate process, and cannot tamper with the audit log after the fact.
+
+\textbf{Defender capabilities.} The defender controls a gate process
+that sits between the agent runtime and the tool implementations. The
+gate runs in a separate trust domain from the model --- a separate
+process, container, or address space --- and is the only path through
+which tools are invoked. The defender holds the issuer's private key in
+a hardware security module or equivalent. The defender authors tool JSON
+Schemas and constraint policies; we make no assumption that either is
+correct, only that the SMT prover catches the cases where they disagree.
+
+\textbf{Token confidentiality.} Capability tokens are \emph{unforgeable}
+but not \emph{confidential}: an attacker who steals a valid token can
+use it within its bounds. Production deployments should bind each token
+to a session via a confidential channel (mTLS between agent and gate;
+per-session token rotation; short TTLs) so that exfiltrated tokens are
+useless to attackers operating in different sessions. The reference
+implementation does not enforce this binding --- it is the
+responsibility of the deployment. The threat model in this paper assumes
+tokens cannot be exfiltrated from the agent runtime; this assumption is
+realistic for in-process deployments and weakens to ``tokens have short
+TTL and are bound to session keys'' in the multi-tenant case.
+
+\textbf{Security goal.} For every tool call
+\(c = (\text{tool}, \text{args})\) that the gate authorises with token
+\(t\), the arguments \(\text{args}\) satisfy every constraint in \(t\),
+and \(t\) is a valid descendant of a root token signed by a pinned
+issuer. We refer to this property as \emph{gate soundness}. We also
+require \emph{attenuation soundness}: no child token derived from a
+parent can carry permissions broader than the parent along any
+constraint dimension or lifetime.
+
+\textbf{Operational definition of ``tool-call-mediated.''} Throughout
+this paper an attack is \emph{tool-call-mediated} iff its success
+criterion is the invocation of a specific tool with specific argument
+values. This matches AgentDojo's \texttt{security} boolean and
+InjecAgent's success predicate exactly. An attack whose success
+criterion is, for example, the agent \emph{speaking aloud} a secret it
+previously retrieved through a tool --- without subsequently emitting a
+structured tool call to exfiltrate it --- is \textbf{not}
+tool-call-mediated under this definition, regardless of whether a tool
+call earlier in the trace produced the secret. We make no claim against
+the non-tool-call-mediated class; see §6.5.
+
+\textbf{Out of scope.} We list explicitly what VCD does \emph{not}
+claim. Free-form natural-language output attacks --- for example, an
+attacker coercing the agent to reveal a secret in its visible response
+--- remain unaddressed; the bounded-grammar argument does not apply.
+Side-channel exfiltration through allowed parameter values (an
+\texttt{amount} field accepting any 64-bit integer permits up to 64 bits
+per call of covert content) is not prevented; we discuss in Section 8
+how schema tightening reduces this channel. Confused-deputy attacks
+across multiple legitimately-authorised tool calls --- read mailbox,
+then exfiltrate via legitimate \texttt{send\_email} --- are partially
+addressed by our companion provenance layer {[}omitted for blind
+review{]} but are not the focus of this paper. The model itself is not
+part of the trusted computing base; the gate is. Compromise of the gate
+process or the issuer's signing key is outside the model.
+
+\textbf{Trust boundary of the gate.} Because the gate's integrity is
+load-bearing for every claim in this paper, we are explicit about what
+its operational profile must look like. The gate runs in a separate
+process from the agent runtime, with no \texttt{eval}, \texttt{exec}, or
+untrusted-deserialisation entry points reachable from agent-controlled
+data; the issuer's private key resides in a hardware security module or
+analogous trusted environment; the audit log is written to append-only
+storage. Standard process-isolation, language-runtime hardening, and
+key-management practices apply. These requirements are the same as for
+any cryptographic gateway and are not specific to VCD. An agent runtime
+compromised by an unrelated vulnerability --- RCE into the gate's
+address space, key exfiltration via memory disclosure --- would defeat
+the property; we are not protecting against operating-system-level
+compromise.
+
+This threat model is deliberately narrower than the universal ``we
+defend against all prompt injection'' claims common in the prior
+literature. We argue that narrow, well-defined threat models with formal
+guarantees are more useful to deployers than broad informal claims with
+statistical guarantees.

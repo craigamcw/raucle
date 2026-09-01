@@ -27,7 +27,7 @@
       "value": "raucle-audit"
     },
     "raucleImage": {
-      "value": "ghcr.io/craigamcw/raucle:v0.12.0"
+      "value": "ghcr.io/epic28-ltd/raucle:v0.12.0"
     },
     "issuerId": {
       "value": "acme.bank.kyc-platform"

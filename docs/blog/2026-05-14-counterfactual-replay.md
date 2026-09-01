@@ -1,6 +1,6 @@
 # What Would Have Happened? Counterfactual Replay for AI Workflows
 
-*Published 14 May 2026 · Raucle Engineering · Release: [raucle v0.6.0](https://github.com/craigamcw/raucle/releases/tag/v0.6.0)*
+*Published 14 May 2026 · Raucle Engineering · Release: [raucle v0.6.0](https://github.com/epic28-ltd/raucle/releases/tag/v0.6.0)*
 
 ---
 
@@ -158,8 +158,8 @@ If you are running a production LLM gateway and you want to actually use this:
 If you are evaluating raucle for the first time:
 
 - [Spec for the underlying provenance receipt format](https://raucle.com/spec/provenance/v1) — already three reference implementations across Python, TypeScript, Go, and Rust.
-- [raucle-bench](https://github.com/craigamcw/raucle-bench) — public leaderboard if you want to compare detectors before integrating.
-- [Source for the replay module](https://github.com/craigamcw/raucle/blob/main/raucle/replay.py) — ~400 lines, MIT, the test suite at [`tests/test_replay.py`](https://github.com/craigamcw/raucle/blob/main/tests/test_replay.py) is the contract.
+- [raucle-bench](https://github.com/epic28-ltd/raucle-bench) — public leaderboard if you want to compare detectors before integrating.
+- [Source for the replay module](https://github.com/epic28-ltd/raucle/blob/main/raucle/replay.py) — ~400 lines, MIT, the test suite at [`tests/test_replay.py`](https://github.com/epic28-ltd/raucle/blob/main/tests/test_replay.py) is the contract.
 
 The thread that connects everything we have shipped over the last year — audit chains, signed receipts, provenance graphs, MCP scanners, public benchmarks, this — is that **trust in AI infrastructure must be cryptographic, not promised**. Counterfactual replay is what that thread looks like when you pull on it long enough. The next pull is multimodal injection, which is what attackers are actually doing in 2026 and what most detectors still cannot see.
 
@@ -167,6 +167,6 @@ We will be writing about that next.
 
 ---
 
-*Discussion: [Hacker News](https://news.ycombinator.com/submit) · [Lobste.rs](https://lobste.rs/) · [/r/MachineLearning](https://reddit.com/r/MachineLearning) · [GitHub Issues](https://github.com/craigamcw/raucle/issues?q=label%3Areplay)*
+*Discussion: [Hacker News](https://news.ycombinator.com/submit) · [Lobste.rs](https://lobste.rs/) · [/r/MachineLearning](https://reddit.com/r/MachineLearning) · [GitHub Issues](https://github.com/epic28-ltd/raucle/issues?q=label%3Areplay)*
 
 *Raucle is an open-source AI security project. The runtime detection engine, the provenance receipt format, the input store, and all reference implementations are MIT-licensed.*

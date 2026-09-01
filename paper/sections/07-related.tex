@@ -318,3 +318,34 @@ Guard) is not an oversight but a property of the design space: a
 statistical classifier cannot produce a verifiable receipt because there
 is no verifiable claim to cite. A structurally-enforced gate composed
 with a content-addressed signing chain can.
+
+\textbf{Delegated verification.} The three uses above assume the
+verifier replays the checks itself. In practice two consumption patterns
+coexist, and the boundary between them matters more than the choice.
+Low-volume, high-stakes verification (a regulator auditing three months
+of receipts, a tool-side gate on a single call) is best served by direct
+verification: the checks are cheap, fully offline, and leave the
+verifier dependent on nobody. High-volume downstream consumption --- a
+partner platform ingesting thousands of verdicts, a SIEM correlating
+agent activity at line rate --- cannot afford to replay cryptographic
+chains per event. For that pattern the receipt admits a \emph{delegated
+verdict}: a signed, first-class artefact in which an independent
+verifier asserts the outcome of the checks over a bounded set of
+receipts. Four fields make delegation sound rather than a
+re-introduction of trusted third parties: (i) \emph{receipt binding} ---
+the verdict carries the content-addressed hash of the receipt it was
+computed over, so it cannot be replayed for a different receipt; (ii)
+\emph{key provenance} --- the key IDs and fingerprints actually used, so
+the consumer pins its trust anchors independently of the verifier; (iii)
+\emph{revocation state} --- the registry checkpoint and verification
+timestamp the verifier consulted, with an explicit validity window,
+because freshness is bounded by the revocation data the verifier saw,
+not by when the consumer reads the verdict; (iv) \emph{verification
+scope} --- which checks were and were not performed, because a verdict
+that silently omits a check is worse than one that states its limits.
+Without those four, delegated verification collapses into ``trust the
+verifier'', the failure mode the receipt was built to avoid. The
+compliance evidence pack in the reference implementation (§5) is the
+seed of this artefact: a bounded verdict over a chain, whose extension
+to carry key fingerprints and registry checkpoint hashes is future work
+alongside the selective-disclosure layer.

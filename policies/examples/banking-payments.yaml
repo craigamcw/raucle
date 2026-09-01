@@ -200,5 +200,5 @@ policies:
     destination: "sanctions-screening*"
     constraints:
       starts_with:
-        entity_name: ["SAN-"]
+        entity_name: "SAN-"
     description: "Check an entity against the sanctions list (must use SAN- prefixed IDs)"

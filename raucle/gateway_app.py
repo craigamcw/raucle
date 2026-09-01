@@ -928,7 +928,7 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
   background-size:24px 24px;
   cursor:grab;user-select:none;
 }
-.topo-canvas:active{cursor:grabbing}
+.topo-canvas.panning{cursor:grabbing}
 .topo-svg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1}
 .topo-content{position:absolute;top:0;left:0;width:100%;height:100%;z-index:2;transform-origin:0 0}
 .topo-node{
@@ -953,6 +953,12 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
 .topo-badge{display:inline-block;font-size:9px;padding:1px 7px;border-radius:4px;background:#f1f2f4;color:#3a3f4b;margin-top:3px}
 /* Hero-style glow loops: drawn around hovered/selected nodes and deny-view nodes */
 .topo-loop{pointer-events:none}
+/* Topology controls (zoom/fit/fullscreen) */
+.topo-controls{position:absolute;top:10px;right:10px;z-index:10;display:flex;gap:2px;background:#fff;border:1px solid #e5e7ec;border-radius:10px;padding:4px;box-shadow:0 2px 10px rgba(17,18,24,0.10)}
+.topo-ctrl{width:30px;height:30px;border:none;background:transparent;border-radius:7px;cursor:pointer;font-size:15px;line-height:1;color:#3a3f4b;display:flex;align-items:center;justify-content:center}
+.topo-ctrl:hover{background:#f1f2f4}
+.topo-ctrl svg{width:15px;height:15px;stroke:#3a3f4b;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#topoCanvas:fullscreen{height:100vh;border-radius:0;background-color:#f8f9fb}
 /* Scenario picker buttons */
 .scenario-btn{padding:6px 14px;border-radius:999px;border:1px solid #e5e7ec;background:#fff;font-size:0.78rem;font-weight:600;color:#3a3f4b;cursor:pointer}
 .scenario-btn.active{background:#111218;color:#fff;border-color:#111218}
@@ -1034,11 +1040,25 @@ body.demo .btn-primary{display:none}
           </select>
           <label class="toggle"><input type="checkbox" id="topoMotion" checked onchange="topoRender()"> Animated traffic</label>
           <span style="flex:1"></span>
-          <span style="font-size:0.75rem;color:#8b919e">Click a node to isolate its paths. Hover for details.</span>
+          <span style="font-size:0.75rem;color:#8b919e">Click a node to isolate its paths and filter the table below. Drag to pan, scroll to zoom.</span>
         </div>
         <div id="topoCanvas" class="topo-canvas">
           <svg class="topo-svg" id="topoSvg"></svg>
           <div class="topo-content" id="topoContent"></div>
+          <div class="topo-controls">
+            <button class="topo-ctrl" title="Zoom in" onclick="topoZoomIn()">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            </button>
+            <button class="topo-ctrl" title="Zoom out" onclick="topoZoomOut()">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            </button>
+            <button class="topo-ctrl" title="Fit to view" onclick="topoFit()">
+              <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            </button>
+            <button class="topo-ctrl" title="Fullscreen" onclick="topoFullscreen()">
+              <svg viewBox="0 0 24 24" id="topoFsIcon"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><line x1="3" y1="3" x2="21" y2="21"/></svg>
+            </button>
+          </div>
         </div>
       </div>
       <div class="card">
@@ -1257,6 +1277,8 @@ function getFiltered() {
   if(fd)conns=conns.filter(c=>c.decision===fd);
   if(selectedSource)conns=conns.filter(c=>c.source===selectedSource);
   if(selectedDest)conns=conns.filter(c=>c.destination===selectedDest);
+  const mid=document.getElementById('midFilter');
+  if(mid&&mid.value){const mv=mid.value.toLowerCase();conns=conns.filter(c=>(c.tool||'').toLowerCase().includes(mv));}
   return conns;
 }
 
@@ -1688,8 +1710,20 @@ function topoRender() {
       `<div class="topo-sub">${esc(n.sub || '')}</div>` +
       (n.badge ? `<span class="topo-badge">${esc(n.badge)}</span>` : '');
     el.addEventListener('click', () => {
-      topoSelected = (topoSelected === n.id) ? null : n.id;
+      const wasSame = topoSelected === n.id;
+      topoSelected = wasSame ? null : n.id;
+      // Filter the traffic flow table below to this node's flow
+      if (!wasSame) {
+        if (n.id.startsWith('src-')) { selectedSource = n.label; selectedDest = null; }
+        else if (n.id.startsWith('dst-')) { selectedDest = n.label; selectedSource = null; }
+        else { selectedSource = null; selectedDest = null;
+               const mid = document.getElementById('midFilter'); if (mid) mid.value = n.label; }
+      } else {
+        selectedSource = null; selectedDest = null;
+        const mid = document.getElementById('midFilter'); if (mid) mid.value = '';
+      }
       topoRender();
+      renderFlow(); renderConnTable();
     });
     el.addEventListener('mouseenter', () => {
       topoHoverLoop = topoGlowLoop(svg, p.x, p.y, TOPO_W, TOPO_NODE_H, '#111218');
@@ -1704,18 +1738,111 @@ function topoRender() {
     }
   });
 
-  // fit horizontally: scale content into canvas
+  // Apply the current view (scale + pan); fit computed lazily on first render
+  applyTopoView();
+}
+
+// ===== topology view model: zoom + pan =====
+let topoScale = 1, topoPanX = 0, topoPanY = 0, topoFitPending = true;
+
+function applyTopoView() {
+  const svg = document.getElementById('topoSvg');
+  const content = document.getElementById('topoContent');
   const canvas = document.getElementById('topoCanvas');
-  const cw = canvas.clientWidth || 1000;
-  const contentW = TOPO_COL_X.destination + TOPO_W + 40;
-  const scale = Math.min(1, cw / contentW);
-  content.style.transform = `scale(${scale})`;
-  svg.style.transform = `scale(${scale})`;
+  if (!svg || !content || !canvas) return;
+  if (topoFitPending) {
+    const cw = canvas.clientWidth || 1000, ch = canvas.clientHeight || 420;
+    const contentW = TOPO_COL_X.destination + TOPO_W + 60;
+    let maxY = 0;
+    const pos2 = topoLayout();
+    Object.values(pos2).forEach(p => { maxY = Math.max(maxY, p.y + TOPO_NODE_H); });
+    const contentH = Math.max(maxY + 40, 100);
+    const scale = Math.min((cw - 40) / contentW, (ch - 40) / contentH, 1.4);
+    topoScale = Math.max(0.15, scale);
+    topoPanX = (cw - contentW * topoScale) / 2;
+    topoPanY = Math.max(20, (ch - contentH * topoScale) / 2);
+    topoFitPending = false;
+  }
+  const t = `translate(${topoPanX}px,${topoPanY}px) scale(${topoScale})`;
+  content.style.transform = t;
+  svg.style.transform = t;
   svg.style.transformOrigin = '0 0';
+  content.style.transformOrigin = '0 0';
+}
+
+function topoZoomIn() { topoZoomBy(1.25); }
+function topoZoomOut() { topoZoomBy(0.8); }
+function topoZoomBy(f) {
+  const canvas = document.getElementById('topoCanvas');
+  const cw = canvas.clientWidth || 1000, ch = canvas.clientHeight || 420;
+  const cx = cw / 2, cy = ch / 2;
+  topoPanX = cx - (cx - topoPanX) * f;
+  topoPanY = cy - (cy - topoPanY) * f;
+  topoScale = Math.min(3, Math.max(0.15, topoScale * f));
+  topoFitPending = false;
+  applyTopoView();
+}
+function topoFit() { topoFitPending = true; applyTopoView(); }
+
+function topoFullscreen() {
+  const canvas = document.getElementById('topoCanvas');
+  if (!document.fullscreenElement) {
+    canvas.requestFullscreen().catch(()=>{});
+  } else {
+    document.exitFullscreen();
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  const icon = document.getElementById('topoFsIcon');
+  if (icon) {
+    icon.innerHTML = document.fullscreenElement
+      ? '<path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="16" y1="16" x2="8" y2="8"/>'
+      : '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><line x1="3" y1="3" x2="21" y2="21"/>';
+  }
+  topoFitPending = true;
+  setTimeout(applyTopoView, 120);
+});
+
+// Pan: drag anywhere on the canvas background (not on nodes or controls)
+function initTopoPan() {
+  const canvas = document.getElementById('topoCanvas');
+  if (!canvas || canvas.dataset.panBound) return;
+  canvas.dataset.panBound = '1';
+  let panning = false, lastX = 0, lastY = 0;
+  canvas.addEventListener('mousedown', (ev) => {
+    if (ev.target.closest('.topo-node') || ev.target.closest('.topo-controls')) return;
+    panning = true;
+    lastX = ev.clientX; lastY = ev.clientY;
+    canvas.classList.add('panning');
+  });
+  window.addEventListener('mousemove', (ev) => {
+    if (!panning) return;
+    topoPanX += ev.clientX - lastX;
+    topoPanY += ev.clientY - lastY;
+    lastX = ev.clientX; lastY = ev.clientY;
+    topoFitPending = false;
+    applyTopoView();
+  });
+  window.addEventListener('mouseup', () => {
+    panning = false;
+    canvas.classList.remove('panning');
+  });
+  canvas.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const cx = ev.clientX - rect.left, cy = ev.clientY - rect.top;
+    const f = ev.deltaY < 0 ? 1.1 : 0.9;
+    topoPanX = cx - (cx - topoPanX) * f;
+    topoPanY = cy - (cy - topoPanY) * f;
+    topoScale = Math.min(3, Math.max(0.15, topoScale * f));
+    topoFitPending = false;
+    applyTopoView();
+  }, { passive: false });
 }
 
 let topoPollId = null;
 function topoRefresh() {
+  initTopoPan();
   const p = new URLSearchParams({limit: 500});
   api('/api/connections?' + p.toString()).then(r => r.json()).then(d => {
     topoConns = d.connections || [];

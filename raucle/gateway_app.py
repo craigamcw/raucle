@@ -223,6 +223,7 @@ def create_admin_app(gateway: RaucleGateway, users: UserManager) -> FastAPI:
 
     _register_health_routes(app, gateway)
     _register_stats_routes(app, gateway, check_auth, check_access)
+    _register_learn_routes(app, gateway, check_auth, check_access)
     _register_policy_routes(app, gateway, check_auth, check_access)
     _register_receipt_routes(app, gateway, check_auth, check_access)
     _register_siem_routes(app, gateway, check_auth, check_access)
@@ -247,6 +248,28 @@ def _register_health_routes(app: FastAPI, gateway: RaucleGateway) -> None:
             if not _hmac.compare_digest(key, gateway.config.health_check_token):
                 raise HTTPException(status_code=401, detail="Health check unauthorized")
         return {"status": "ok"}
+
+    @app.get(
+        "/api/demo-key",
+        responses={
+            "200": {"description": "Public read-only demo key"},
+            "404": {"description": "Demo mode not configured"},
+        },
+    )
+    def demo_key() -> dict[str, str]:
+        """Public endpoint exposing the read-only demo key (RAUCLE_DEMO_KEY).
+
+        The key this returns holds the auditor role only: dashboard, connections
+        and receipts, all read-only. It exists so the admin panel's View Demo
+        button can enter demo mode without the visitor needing credentials.
+        Never returns an admin or operator key.
+        """
+        import os
+
+        dk = os.environ.get("RAUCLE_DEMO_KEY", "")
+        if not dk:
+            raise HTTPException(404, "demo mode not configured")
+        return {"demo_key": dk}
 
 
 def _register_stats_routes(
@@ -299,6 +322,57 @@ def _register_stats_routes(
                 c for c in connections if destination.lower() in c.get("destination", "").lower()
             ]
         return {"connections": connections[:limit], "count": len(connections)}
+
+
+def _register_learn_routes(
+    app: FastAPI, gateway: RaucleGateway, check_auth: Any, check_access: Any
+) -> None:
+    """Learn mode: observe unmatched traffic, draft policies from it.
+
+    Fail-closed by design: learn mode never authorises traffic. The gate
+    records unmatched calls only when RAUCLE_LEARN_MODE is enabled, and
+    the endpoints below expose counts and a draft policy for human review.
+    The draft is never deployed automatically: the operator copies it
+    into the policy editor, edits, saves, and reloads.
+    """
+
+    @app.get(
+        "/api/learn/summary",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Insufficient role"},
+        },
+    )
+    def learn_summary(authorization: str | None = Header(None)) -> dict[str, Any]:
+        user = check_auth(authorization)
+        check_access(user, "policies")
+        return gateway.learn_summary()
+
+    @app.get(
+        "/api/learn/draft",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Insufficient role"},
+            "200": {"description": "Draft policy YAML (empty string if nothing learned)"},
+        },
+    )
+    def learn_draft(authorization: str | None = Header(None)) -> dict[str, Any]:
+        user = check_auth(authorization)
+        check_access(user, "policies")
+        return {"yaml": gateway.draft_policy()}
+
+    @app.post(
+        "/api/learn/clear",
+        responses={
+            "401": {"description": "MFA required or missing Authorization header"},
+            "403": {"description": "Insufficient role"},
+        },
+    )
+    def learn_clear(authorization: str | None = Header(None)) -> dict[str, Any]:
+        user = check_auth(authorization)
+        check_access(user, "policies")
+        gateway._learn_clear()
+        return {"status": "cleared"}
 
 
 def _policy_dir_response(
@@ -845,6 +919,47 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
   .conn-table { max-height: 400px; overflow-y: auto; }
   .conn-row { cursor: pointer; }
   .conn-row.selected td { background: #f5f5f5; }
+
+/* ===== Embedded live topology (hero-styled, light) ===== */
+.topo-canvas{
+  position:relative;width:100%;height:420px;border-radius:10px;overflow:hidden;
+  background-color:#f8f9fb;
+  background-image:radial-gradient(rgba(17,18,24,0.10) 1px,transparent 1px);
+  background-size:24px 24px;
+  cursor:grab;user-select:none;
+}
+.topo-canvas:active{cursor:grabbing}
+.topo-svg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.topo-content{position:absolute;top:0;left:0;width:100%;height:100%;z-index:2;transform-origin:0 0}
+.topo-node{
+  position:absolute;width:190px;padding:10px 12px;border-radius:10px;
+  background:#ffffff;border:1px solid #e5e7ec;
+  box-shadow:0 2px 10px rgba(17,18,24,0.06);
+  cursor:pointer;transition:opacity .25s,box-shadow .2s,border-color .2s,transform .2s;
+}
+.topo-node:hover{border-color:#111218;transform:translateY(-1px);box-shadow:0 6px 18px rgba(17,18,24,0.10)}
+.topo-node.selected{border-color:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,0.18),0 4px 14px rgba(17,18,24,0.10)}
+.topo-node.dimmed{opacity:0.18}
+.topo-node-src{border-left:3px solid #111218}
+.topo-node-dst{border-left:3px solid #22c55e}
+.topo-node-hdr{display:flex;align-items:center;gap:7px;margin-bottom:2px}
+.topo-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;animation:topo-pulse 2s infinite}
+.topo-dot.allow{background:#22c55e;box-shadow:0 0 6px rgba(34,197,94,0.7)}
+.topo-dot.deny{background:#dd6b78;box-shadow:0 0 6px rgba(221,107,120,0.7)}
+.topo-dot.escalate{background:#e5b85c;box-shadow:0 0 6px rgba(229,184,92,0.7)}
+@keyframes topo-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+.topo-name{font-size:12px;font-weight:600;color:#111218;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topo-sub{font-size:10px;color:#8b919e;margin-top:1px;font-family:ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topo-badge{display:inline-block;font-size:9px;padding:1px 7px;border-radius:4px;background:#f1f2f4;color:#3a3f4b;margin-top:3px}
+/* Hero-style glow loops: drawn around hovered/selected nodes and deny-view nodes */
+.topo-loop{pointer-events:none}
+/* Scenario picker buttons */
+.scenario-btn{padding:6px 14px;border-radius:999px;border:1px solid #e5e7ec;background:#fff;font-size:0.78rem;font-weight:600;color:#3a3f4b;cursor:pointer}
+.scenario-btn.active{background:#111218;color:#fff;border-color:#111218}
+/* Demo mode: hide privileged tabs + disable every edit affordance */
+body.demo [data-tab-id="policies"], body.demo [data-tab-id="siem"], body.demo [data-tab-id="users"], body.demo [data-tab-id="config"], body.demo [data-tab-id="topo-link"]{display:none}
+body.demo .btn-primary{display:none}
+
 </style>
 </head>
 <body>
@@ -864,19 +979,35 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
       <button class="btn" style="width:100%;margin-top:8px" onclick="loginWithTotp()">Verify & Sign In</button>
     </div>
     <button class="btn" style="width:100%;margin-top:12px" onclick="login()">Sign In</button>
+    <div style="text-align:center;margin:16px 0 8px;color:var(--text-muted,#8b919e);font-size:0.8rem">or</div>
+    <button class="btn" style="width:100%;background:#111218;color:#fff" onclick="enterDemo()">View Demo</button>
+    <div style="margin-top:10px;font-size:0.75rem;color:var(--text-muted,#8b919e);text-align:center">
+      Read-only demonstration across banking, government and health scenarios.
+    </div>
   </div>
 </div>
 
 <div id="main" class="hidden">
+  <div id="demoBanner" class="hidden" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;margin-bottom:14px;background:#f8f9fb;border:1px solid #e5e7ec;border-radius:12px">
+    <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;font-weight:600;color:#fff;background:#22c55e;padding:3px 10px;border-radius:999px">
+      <span style="width:6px;height:6px;border-radius:50%;background:#fff;display:inline-block"></span>
+      DEMO MODE
+    </span>
+    <span style="font-size:0.82rem;color:#3a3f4b">Read-only view of a live deployment with simulated agent traffic.</span>
+    <span style="flex:1"></span>
+    <div id="scenarioPicker" style="display:flex;gap:8px"></div>
+    <button class="btn" style="padding:6px 14px;font-size:0.8rem" onclick="location.reload()">Exit Demo</button>
+  </div>
   <div class="tabs">
     <div class="tab active" onclick="showTab('dashboard',this)">Dashboard</div>
     <div class="tab" onclick="showTab('connections',this)">Connections</div>
-    <div class="tab" onclick="showTab('policies',this)">Policies</div>
+    <div class="tab" onclick="showTab('policies',this)" data-tab-id="policies">Policies</div>
+    <div class="tab" onclick="showTab('learn',this)" data-tab-id="learn">Learn</div>
     <div class="tab" onclick="showTab('receipts',this)">Receipts</div>
-    <div class="tab" onclick="showTab('siem',this)">SIEM</div>
-    <div class="tab" onclick="showTab('users',this)">Users</div>
-    <div class="tab" onclick="showTab('config',this)">Config</div>
-    <div class="tab" onclick="window.location.href='/topology'" style="color:var(--active-green)">Topology</div>
+    <div class="tab" onclick="showTab('siem',this)" data-tab-id="siem">SIEM</div>
+    <div class="tab" onclick="showTab('users',this)" data-tab-id="users">Users</div>
+    <div class="tab" onclick="showTab('config',this)" data-tab-id="config">Config</div>
+    <div class="tab" onclick="window.location.href='/topology'" style="color:var(--active-green)" data-tab-id="topo-link">Topology</div>
   </div>
   <div class="content">
 
@@ -892,6 +1023,24 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
 
     <!-- CONNECTIONS - Netbird-style flow graph -->
     <div id="tab-connections" class="hidden">
+      <div class="card">
+        <div class="card-title"><span class="live-dot"></span>Live Topology</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <select class="input" id="topoDecisionFilter" style="width:auto" onchange="topoRender()">
+            <option value="">All Decisions</option>
+            <option value="allow">Allow</option>
+            <option value="deny">Deny</option>
+            <option value="escalate">Escalate</option>
+          </select>
+          <label class="toggle"><input type="checkbox" id="topoMotion" checked onchange="topoRender()"> Animated traffic</label>
+          <span style="flex:1"></span>
+          <span style="font-size:0.75rem;color:#8b919e">Click a node to isolate its paths. Hover for details.</span>
+        </div>
+        <div id="topoCanvas" class="topo-canvas">
+          <svg class="topo-svg" id="topoSvg"></svg>
+          <div class="topo-content" id="topoContent"></div>
+        </div>
+      </div>
       <div class="card">
         <div class="card-title"><span class="live-dot"></span>Traffic Flow</div>
         <div class="filter-bar">
@@ -943,6 +1092,26 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
         <div class="file-list" id="fileList"></div>
         <textarea class="editor" id="policyEditor"></textarea>
         <div class="actions"><button class="btn" onclick="validatePolicy()">Validate</button><button class="btn" onclick="savePolicy()">Save & Deploy</button><button class="btn btn-secondary" onclick="reloadPolicy()">Reload</button></div>
+      </div>
+    </div>
+    <div id="tab-learn" class="hidden">
+      <div class="card">
+        <div class="card-title">Learn Mode — draft policies from observed traffic</div>
+        <p style="font-size:0.85rem;color:#8b919e;margin-bottom:14px">
+          With learn mode enabled, the gate records every call it <strong>denied</strong> for
+          having no matching policy. From those observations it drafts candidate rules:
+          allow lists for low-cardinality string fields, bounds for numerics, and required
+          fields seen in every call. The gate stays fail-closed the whole time — learning
+          never authorises traffic. Review the draft, copy it into the policy editor,
+          adjust, then Save & Deploy.
+        </p>
+        <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="loadLearn()">Refresh</button>
+          <button class="btn" onclick="copyDraftToEditor()">Copy into Policy Editor</button>
+          <button class="btn" onclick="clearLearn()">Clear Observations</button>
+        </div>
+        <div id="learnSummary" style="margin-top:14px;font-size:0.85rem"></div>
+        <pre id="learnDraft" style="margin-top:10px;max-height:420px;overflow:auto;background:#f8f9fb;border:1px solid #e5e7ec;border-radius:10px;padding:14px;font-size:0.78rem">No observations yet.</pre>
       </div>
     </div>
     <div id="tab-receipts" class="hidden"><div class="card"><div class="card-title">Recent Receipts</div><pre id="receiptsView">Loading...</pre></div></div>
@@ -1055,7 +1224,7 @@ function showTab(t,el) {
   document.querySelectorAll('[id^=tab-]').forEach(x=>x.classList.add('hidden'));
   el.classList.add('active'); document.getElementById('tab-'+t).classList.remove('hidden');
   if(t==='dashboard')loadStats(); if(t==='connections'){loadConnections();startConnPolling();} else stopConnPolling();
-  if(t==='policies')loadPolicy(); if(t==='receipts')loadReceipts(); if(t==='siem')loadSIEM(); if(t==='users')loadUsers(); if(t==='config')loadConfig();
+  if(t==='policies')loadPolicy(); if(t==='learn')loadLearn(); if(t==='receipts')loadReceipts(); if(t==='siem')loadSIEM(); if(t==='users')loadUsers(); if(t==='config')loadConfig();
 }
 function api(p,o){const h={'Authorization':key,...((o||{}).headers||{})};if(totpCode)h['X-TOTP']=totpCode;return fetch(p,{...(o||{}),headers:h});}
 function loadAll(){loadStats();}
@@ -1071,7 +1240,15 @@ function loadConnections() {
   let p=new URLSearchParams({limit:500});
   let fd=document.getElementById('filterDecision').value;
   if(fd)p.set('decision',fd);
-  api('/api/connections?'+p.toString()).then(r=>r.json()).then(d=>{allConns=d.connections||[];renderFlow();renderConnTable();}).catch(()=>{});
+  api('/api/connections?'+p.toString()).then(r=>r.json()).then(d=>{
+    allConns=d.connections||[];
+    if(demoMode&&demoScenarioFilter!=='all'){
+      const sc=demoScenarioFilter;
+      const tools={banking:['lookup_balance','transfer_internal','transfer_external','block_card','increase_card_limit','check_loan_status','create_loan_application','file_sar','check_sanctions','unblock_card','lookup_transaction_history'],government:['check_benefit_entitlement','lookup_payment_history','schedule_benefit_payment','flag_fraud_suspected','lookup_tax_account','calculate_tax_estimate','submit_self_assessment','retrieve_planning_application','update_case_notes','recommend_decision','check_immigration_status','request_dbs_check','search_foi_register','draft_foi_response'],health:['read_patient_record','write_patient_note','prescribe_medication','prescribe_controlled','order_imaging','view_imaging_result','order_lab_test','review_lab_results','triage_assessment','export_patient_summary','book_appointment','cancel_appointment']};
+      allConns=allConns.filter(c=>(tools[sc]||[]).includes(c.tool)||(c.policy||'').toLowerCase().includes({banking:'banking',government:'government',health:'healthcare'}[sc]));
+    }
+    renderFlow();renderConnTable();
+  }).catch(()=>{});
 }
 
 function getFiltered() {
@@ -1298,6 +1475,298 @@ function saveConfig(){
 
 setInterval(()=>{if(!document.getElementById('main').classList.contains('hidden')&&!document.getElementById('tab-dashboard').classList.contains('hidden'))loadStats();},5000);
 window.addEventListener('resize',()=>{if(!document.getElementById('tab-connections').classList.contains('hidden'))drawFlowLines(getFiltered());});
+
+// ================= DEMO MODE =================
+const DEMO_SCENARIOS = ['banking', 'government', 'health'];
+let demoMode = false;
+let topoNodes = [], topoEdges = [], topoSelected = null, topoConns = [];
+let topoHoverLoop = null, topoDenyLoops = [];
+
+async function fetchDemoKey() {
+  // The server exposes the read-only demo key (no other secrets)
+  try {
+    const r = await fetch('/api/demo-key');
+    if (r.ok) { const d = await r.json(); return d.demo_key || ''; }
+  } catch (e) {}
+  return '';
+}
+
+async function enterDemo() {
+  const dk = await fetchDemoKey();
+  if (!dk) { alert('Demo is not configured on this deployment. Set RAUCLE_DEMO_KEY.'); return; }
+  key = dk;
+  totpCode = '';
+  demoMode = true;
+  document.body.classList.add('demo');
+  document.getElementById('login').classList.add('hidden');
+  document.getElementById('main').classList.remove('hidden');
+  document.getElementById('demoBanner').classList.remove('hidden');
+  buildScenarioPicker();
+  showMainDemo();
+}
+
+function buildScenarioPicker() {
+  const bar = document.getElementById('scenarioPicker');
+  if (!bar) return;
+  const mk = (label, val) => `<button class="scenario-btn${(demoScenarioFilter===val)?' active':''}" onclick="setDemoScenario('${val}')">${label}</button>`;
+  let html = mk('All', 'all');
+  DEMO_SCENARIOS.forEach(s => html += mk(s[0].toUpperCase()+s.slice(1), s));
+  bar.innerHTML = html;
+}
+
+let demoScenarioFilter = 'all';
+function setDemoScenario(v) { demoScenarioFilter = v; buildScenarioPicker(); loadConnections(); topoRefresh(); }
+
+function showMainDemo() {
+  // Default to the connections tab where the live topology lives
+  const connTab = document.querySelector('.tab[data-tab-id], .tab');
+  document.querySelectorAll('.tab').forEach(x => {
+    if (x.getAttribute('onclick') && x.getAttribute('onclick').includes("'connections'")) x.click();
+  });
+  loadAll();
+}
+
+// ================= EMBEDDED LIVE TOPOLOGY =================
+// Hero palette: ink #111218, green #22c55e, deny red #dd6b78, warn #e5b85c,
+// neutral #8b919e. Glow loops (hero-style) appear on node hover and around
+// deny sources when deny filtering is active.
+const TOPO_COL_X = { source: 40, policy: 400, destination: 760 };
+const TOPO_NODE_H = 60, TOPO_NODE_GAP = 22, TOPO_W = 190;
+
+function topoEdgeColor(decision) {
+  if (decision === 'allow') return '#22c55e';
+  if (decision === 'deny') return '#dd6b78';
+  if (decision === 'escalate') return '#e5b85c';
+  return '#111218';
+}
+
+function topoFilterConns(conns) {
+  let out = conns;
+  const df = document.getElementById('topoDecisionFilter')?.value || '';
+  if (df) out = out.filter(c => c.decision === df);
+  if (demoScenarioFilter !== 'all') {
+    const sc = demoScenarioFilter;
+    out = out.filter(c => {
+      // Scenario inference: policy file name or tool name carries the scenario signature
+      const pol = (c.policy || '').toLowerCase();
+      const tools = { banking: ['lookup_balance','transfer_internal','transfer_external','block_card','increase_card_limit','check_loan_status','create_loan_application','file_sar','check_sanctions','unblock_card','lookup_transaction_history'],
+                      government: ['check_benefit_entitlement','lookup_payment_history','schedule_benefit_payment','flag_fraud_suspected','lookup_tax_account','calculate_tax_estimate','submit_self_assessment','retrieve_planning_application','update_case_notes','recommend_decision','check_immigration_status','request_dbs_check','search_foi_register','draft_foi_response'],
+                      health: ['read_patient_record','write_patient_note','prescribe_medication','prescribe_controlled','order_imaging','view_imaging_result','order_lab_test','review_lab_results','triage_assessment','export_patient_summary','book_appointment','cancel_appointment'] };
+      return (tools[sc] || []).includes(c.tool) || pol.includes(sc) || pol.includes({banking:'banking',government:'government',health:'healthcare'}[sc]);
+    });
+  }
+  return out;
+}
+
+function topoBuild() {
+  const conns = topoFilterConns(topoConns);
+  if (!conns.length) { topoNodes = []; topoEdges = []; return; }
+  const bySrc = {}, byTool = {}, byDst = {};
+  conns.forEach(c => {
+    const s = c.source || 'unknown', t = c.tool || 'unknown', d = c.destination || 'unknown';
+    (bySrc[s] = bySrc[s] || {n:0, allow:0, deny:0, escalate:0}).n++; bySrc[s][c.decision] = (bySrc[s][c.decision]||0)+1;
+    (byTool[t] = byTool[t] || {n:0, allow:0, deny:0, escalate:0, policy:c.policy||''}).n++; byTool[t][c.decision] = (byTool[t][c.decision]||0)+1;
+    (byDst[d] = byDst[d] || {n:0, allow:0, deny:0, escalate:0}).n++; byDst[d][c.decision] = (byDst[d][c.decision]||0)+1;
+  });
+  const status = d => d.deny > d.allow ? 'deny' : d.escalate > 0 ? 'escalate' : 'allow';
+  topoNodes = []; topoEdges = [];
+  Object.entries(bySrc).forEach(([n, d]) => topoNodes.push({id:'src-'+n, type:'source', label:n, sub:d.n+' calls', status:status(d), meta:d}));
+  Object.entries(byTool).forEach(([n, d]) => topoNodes.push({id:'tool-'+n, type:'policy', label:n, sub:(d.policy||'').split('/').pop(), badge:d.n+' calls', status:status(d), meta:d}));
+  Object.entries(byDst).forEach(([n, d]) => topoNodes.push({id:'dst-'+n, type:'destination', label:n, sub:d.n+' calls', status:status(d), meta:d}));
+  const seen = {};
+  conns.forEach((c, i) => {
+    const s = 'src-'+(c.source||'unknown'), t = 'tool-'+(c.tool||'unknown'), d = 'dst-'+(c.destination||'unknown');
+    const col = topoEdgeColor(c.decision);
+    const seg = (a, b, lbl) => {
+      const k = a+'|'+b+'|'+lbl;
+      if (seen[k]) return; seen[k] = 1;
+      topoEdges.push({id:'e'+i+'-'+a+'-'+b, source:a, target:b, label:lbl, colour:col, decision:c.decision});
+    };
+    seg(s, t, ''); seg(t, d, (c.policy||'').split('/').pop());
+  });
+}
+
+function topoEdgePath(sp, dp) {
+  const x1 = sp.x + TOPO_W, y1 = sp.y + TOPO_NODE_H/2, x2 = dp.x, y2 = dp.y + TOPO_NODE_H/2;
+  const mx = (x1 + x2) / 2;
+  return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+}
+
+function topoLayout() {
+  const cols = {source:[], policy:[], destination:[]};
+  topoNodes.forEach(n => (cols[n.type] || []).push(n));
+  const pos = {};
+  ['source','policy','destination'].forEach(t => {
+    const list = cols[t];
+    list.sort((a,b) => a.label.localeCompare(b.label));
+    const totalH = list.length * (TOPO_NODE_H + TOPO_NODE_GAP) - TOPO_NODE_GAP;
+    let y = Math.max(24, (600 - totalH) / 2);
+    list.forEach(n => { pos[n.id] = {x: TOPO_COL_X[t], y}; y += TOPO_NODE_H + TOPO_NODE_GAP; });
+  });
+  return pos;
+}
+
+function topoGlowLoop(svg, x, y, w, h, colour) {
+  // Hero-style glowing rounded-rect loop around a node
+  const g = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  g.setAttribute('x', x - 4); g.setAttribute('y', y - 4);
+  g.setAttribute('width', w + 8); g.setAttribute('height', h + 8);
+  g.setAttribute('rx', 13); g.setAttribute('fill', 'none');
+  g.setAttribute('stroke', colour); g.setAttribute('stroke-width', '2');
+  g.setAttribute('opacity', '0.85');
+  g.style.filter = `drop-shadow(0 0 6px ${colour})`;
+  const anim = document.createElementNS('http://www.w3.org/2000/svg','animate');
+  anim.setAttribute('attributeName', 'opacity');
+  anim.setAttribute('values', '0.35;0.95;0.35');
+  anim.setAttribute('dur', '1.6s');
+  anim.setAttribute('repeatCount', 'indefinite');
+  g.appendChild(anim);
+  svg.appendChild(g);
+  return g;
+}
+
+function topoRender() {
+  const svg = document.getElementById('topoSvg'), content = document.getElementById('topoContent');
+  if (!svg || !content) return;
+  const motion = document.getElementById('topoMotion')?.checked !== false;
+  svg.innerHTML = ''; content.innerHTML = '';
+  topoHoverLoop = null; topoDenyLoops = [];
+  if (!topoNodes.length) {
+    content.innerHTML = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#8b919e;font-size:0.85rem">No connections yet' + (demoScenarioFilter!=='all' ? ' in this scenario' : '') + '</div>';
+    return;
+  }
+  const pos = topoLayout();
+
+  // connected set for dimming
+  const conn = new Set();
+  if (topoSelected) {
+    conn.add(topoSelected);
+    topoEdges.forEach(e => { if (e.source===topoSelected) conn.add(e.target); if (e.target===topoSelected) conn.add(e.source); });
+  }
+
+  // edges + particles
+  topoEdges.forEach(e => {
+    const sp = pos[e.source], dp = pos[e.target];
+    if (!sp || !dp) return;
+    const dimmed = topoSelected && !conn.has(e.source) && !conn.has(e.target);
+    const d = topoEdgePath(sp, dp);
+    const base = document.createElementNS('http://www.w3.org/2000/svg','path');
+    base.setAttribute('d', d); base.setAttribute('stroke', e.colour);
+    base.setAttribute('stroke-width','1.4'); base.setAttribute('fill','none');
+    base.setAttribute('opacity', dimmed ? '0.08' : '0.35');
+    svg.appendChild(base);
+    if (motion && !dimmed) {
+      const p = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      p.setAttribute('r','3'); p.setAttribute('fill', e.colour); p.setAttribute('opacity','0.9');
+      p.style.filter = `drop-shadow(0 0 4px ${e.colour})`;
+      const a = document.createElementNS('http://www.w3.org/2000/svg','animateMotion');
+      a.setAttribute('dur', e.decision==='deny' ? '3.4s' : '2.4s');
+      a.setAttribute('repeatCount','indefinite');
+      a.setAttribute('path', d);
+      p.appendChild(a); svg.appendChild(p);
+    }
+    if (e.label) {
+      const l = document.createElement('div');
+      l.textContent = e.label;
+      l.style.cssText = 'position:absolute;font-size:10px;padding:2px 8px;border-radius:4px;background:#fff;border:1px solid #e5e7ec;color:#8b919e;font-family:ui-monospace,monospace;pointer-events:none;transform:translate(-50%,-50%);white-space:nowrap';
+      l.style.left = ((pos[e.source].x+TOPO_W+pos[e.target].x)/2)+'px';
+      l.style.top = ((pos[e.source].y+pos[e.target].y)/2+TOPO_NODE_H/2)+'px';
+      content.appendChild(l);
+    }
+  });
+
+  // nodes
+  const denyFilterOn = (document.getElementById('topoDecisionFilter')?.value === 'deny');
+  topoNodes.forEach(n => {
+    const p = pos[n.id]; if (!p) return;
+    const el = document.createElement('div');
+    el.className = 'topo-node topo-node-' + (n.type==='source' ? 'src' : n.type==='destination' ? 'dst' : 'pol') +
+      (topoSelected === n.id ? ' selected' : '') + (topoSelected && !conn.has(n.id) ? ' dimmed' : '');
+    el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
+    el.innerHTML = `<div class="topo-node-hdr"><span class="topo-dot ${n.status}"></span>` +
+      `<span class="topo-name">${esc(n.label)}</span></div>` +
+      `<div class="topo-sub">${esc(n.sub || '')}</div>` +
+      (n.badge ? `<span class="topo-badge">${esc(n.badge)}</span>` : '');
+    el.addEventListener('click', () => {
+      topoSelected = (topoSelected === n.id) ? null : n.id;
+      topoRender();
+    });
+    el.addEventListener('mouseenter', () => {
+      topoHoverLoop = topoGlowLoop(svg, p.x, p.y, TOPO_W, TOPO_NODE_H, '#111218');
+    });
+    el.addEventListener('mouseleave', () => {
+      if (topoHoverLoop) { topoHoverLoop.remove(); topoHoverLoop = null; }
+    });
+    content.appendChild(el);
+    // Deny view: glowing red loops around deny nodes (hero-styled)
+    if (denyFilterOn && n.status === 'deny') {
+      topoDenyLoops.push(topoGlowLoop(svg, p.x, p.y, TOPO_W, TOPO_NODE_H, '#dd6b78'));
+    }
+  });
+
+  // fit horizontally: scale content into canvas
+  const canvas = document.getElementById('topoCanvas');
+  const cw = canvas.clientWidth || 1000;
+  const contentW = TOPO_COL_X.destination + TOPO_W + 40;
+  const scale = Math.min(1, cw / contentW);
+  content.style.transform = `scale(${scale})`;
+  svg.style.transform = `scale(${scale})`;
+  svg.style.transformOrigin = '0 0';
+}
+
+let topoPollId = null;
+function topoRefresh() {
+  const p = new URLSearchParams({limit: 500});
+  api('/api/connections?' + p.toString()).then(r => r.json()).then(d => {
+    topoConns = d.connections || [];
+    topoBuild(); topoRender();
+  }).catch(() => {});
+}
+
+// Start topology polling when the connections tab is shown; stop when hidden.
+const origShowTab = showTab;
+showTab = function(t, el) {
+  origShowTab(t, el);
+  if (t === 'connections') {
+    topoRefresh();
+    if (!topoPollId) topoPollId = setInterval(() => {
+      if (!document.hidden && !document.getElementById('tab-connections').classList.contains('hidden')) topoRefresh();
+    }, 5000);
+  } else if (topoPollId) {
+    clearInterval(topoPollId); topoPollId = null;
+  }
+};
+
+
+// ================= LEARN MODE =================
+function loadLearn(){
+  api('/api/learn/summary').then(r=>r.json()).then(s=>{
+    let el=document.getElementById('learnSummary');
+    if(!s.learn_mode){
+      el.innerHTML='<span style="color:#e5b85c">Learn mode is off.</span> Set <code>RAUCLE_LEARN_MODE=true</code> and restart the gateway to start observing unmatched traffic.';
+    } else if(!Object.keys(s.tools||{}).length){
+      el.innerHTML='Learn mode is on. No unmatched calls recorded yet.';
+    } else {
+      let rows=Object.entries(s.tools).map(([t,d])=>`<tr><td>${esc(t)}</td><td>${d.calls}</td><td>${esc((d.agents||[]).join(', ')||'-')}</td></tr>`).join('');
+      el.innerHTML='<table><tr><th>Observed tool</th><th>Denied calls</th><th>Agents</th></tr>'+rows+'</table>';
+    }
+  }).catch(()=>{});
+  api('/api/learn/draft').then(r=>r.json()).then(d=>{
+    document.getElementById('learnDraft').textContent=d.yaml||'Nothing learned yet.';
+  }).catch(()=>{});
+}
+function copyDraftToEditor(){
+  const draft=document.getElementById('learnDraft').textContent;
+  if(!draft||draft.startsWith('Nothing')||draft.startsWith('No obs')){alert('Nothing to copy yet.');return;}
+  showTab('policies',document.querySelector('.tab[data-tab-id="policies"]'));
+  document.getElementById('policyEditor').value=draft;
+  alert('Draft copied into the editor. Review, adjust constraints, then Save & Deploy.');
+}
+function clearLearn(){
+  if(!confirm('Discard all learned observations?'))return;
+  api('/api/learn/clear',{method:'POST'}).then(()=>loadLearn());
+}
+
 </script>
 </body>
 </html>"""

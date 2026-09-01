@@ -64,9 +64,19 @@ read-only at `/etc/raucle/policies-demo`.
 ## What an evaluator should look at
 
 1. **Dashboard** (`/`) — live allow/deny/escalate counters, latency, top tools
-2. **Connection log** — each row is a gated call: source agent → policy applied
+2. **Live topology** (Connections tab) — source nodes left, gate/tools centre, destinations right, animated traffic particles; click a node to isolate its paths; the deny filter marks blocked nodes with glowing red loops
+3. **Connection log** — each row is a gated call: source agent → policy applied
    → decision with reason; filterable by tool, decision, source
-3. **Topology** (`/topology`) — source nodes left, policy nodes centre,
-   destination nodes right, animated traffic on permitted paths
 4. **Receipts** — the cryptographic evidence for any decision, offline-verifiable
 5. **Policy editor** (admin only) — the YAML DSL as a risk officer writes it
+6. **Learn mode** (admin only) — with `RAUCLE_LEARN_MODE=true`, the gate records every call it denied for having no matching policy and drafts candidate rules from the observed traffic. Fail-closed by design: learning never authorises; the operator reviews the draft, copies it into the policy editor, and deploys.
+
+## Learn mode (onboarding a new agent)
+
+To onboard an agent you do not yet have a policy for:
+
+1. Set `RAUCLE_LEARN_MODE=true` and restart the gateway
+2. Point the new agent at `/gate` — every call fails closed with "no policy configured", and the gate records what the agent tried to do
+3. Open the **Learn** tab: observed tools, call counts, and agents
+4. Click **Copy into Policy Editor** — the drafted rules appear as YAML: allow lists for low-cardinality string fields, min/max bounds (10% headroom) for numerics, required fields seen in every call
+5. Review, tighten, **Save & Deploy**, then **Reload** — the agent now runs under a reviewed policy

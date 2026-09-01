@@ -67,6 +67,11 @@ class GatewayConfig:
     policy_file: str = "/etc/raucle/policies.yaml"
     policy_dir: str = ""  # if set, loads all *.yaml files from this directory
 
+    # Learn mode: record unmatched tool calls so the operator can generate
+    # a draft policy from observed traffic. Fail-closed: learning never
+    # authorises anything; it only produces a reviewable draft.
+    learn_mode: bool = False
+
     # Receipts
     receipt_store: str = "/data/receipts.jsonl"
     audit_chain: str = "/data/audit.jsonl"
@@ -101,6 +106,7 @@ class GatewayConfig:
             kms_region=os.environ.get("AWS_REGION", "eu-west-1"),
             policy_file=os.environ.get("RAUCLE_POLICY_FILE", "/etc/raucle/policies.yaml"),
             policy_dir=os.environ.get("RAUCLE_POLICY_DIR", ""),
+            learn_mode=os.environ.get("RAUCLE_LEARN_MODE", "").lower() in ("1", "true", "yes"),
             receipt_store=os.environ.get("RAUCLE_RECEIPT_STORE", "/data/receipts.jsonl"),
             audit_chain=os.environ.get("RAUCLE_AUDIT_CHAIN", "/data/audit.jsonl"),
             siem_enabled=os.environ.get("RAUCLE_SIEM_ENABLED", "").lower() in ("1", "true", "yes"),
@@ -471,6 +477,7 @@ class RaucleGateway:
         self._tokens: dict[str, Any] = {}  # tool_name -> Capability
         self._policy_rules: dict[str, list[Any]] = {}  # tool_name -> [PolicyRule]
         self._all_rules: list[Any] = []
+        self._learned: dict[str, dict[str, Any]] = {}  # learn-mode observations
         self._signer = None
         self._issuer: Any = None
         self._gate: Any = None
@@ -678,10 +685,12 @@ class RaucleGateway:
         }
 
         if tool not in self._policy_rules or tool not in self._tokens:
+            self._learn_observe(tool, args, agent_id, source, destination)
             return self._deny_result(result, f"no policy configured for tool '{tool}'", start)
 
         matched_rule = self._find_rule(tool, source, destination)
         if matched_rule is None:
+            self._learn_observe(tool, args, agent_id, source, destination)
             return self._deny_result(
                 result,
                 f"no policy for tool '{tool}' matching "
@@ -733,6 +742,163 @@ class RaucleGateway:
         result["agent_id"] = actual_agent_id
         self._log_connection(result)
         return result
+
+    # ------------------------------------------------------------------
+    # Learn mode: observe unmatched calls, draft policies from traffic
+    # ------------------------------------------------------------------
+
+    def _learn_observe(
+        self,
+        tool: str,
+        args: dict[str, Any],
+        agent_id: str,
+        source: str,
+        destination: str,
+    ) -> None:
+        """Record an unmatched tool call for draft-policy generation.
+
+        Called only on the deny path (unknown tool or no matching rule):
+        the gate stays fail-closed while learning. Nothing is recorded
+        when learn mode is off. Observed argument values stay in memory
+        and leave the gateway only as inferred constraints (allow lists,
+        numeric bounds, required fields) in the generated draft.
+        """
+        if not getattr(self.config, "learn_mode", False):
+            return
+        try:
+            entry = self._learned.setdefault(
+                tool,
+                {
+                    "agent_ids": set(),
+                    "sources": set(),
+                    "destinations": set(),
+                    "fields": {},  # field -> {"kind":..., "values": set | bounds}
+                    "calls": 0,
+                },
+            )
+            entry["calls"] += 1
+            if agent_id:
+                entry["agent_ids"].add(agent_id)
+            if source:
+                entry["sources"].add(source)
+            if destination:
+                entry["destinations"].add(destination)
+            for field, value in (args or {}).items():
+                f = entry["fields"].setdefault(
+                    field, {"kind": "string", "values": set(), "min": None, "max": None, "seen": 0}
+                )
+                f["seen"] += 1
+                if isinstance(value, bool):
+                    f["kind"] = "bool"
+                    f["values"].add(value)
+                elif isinstance(value, int):
+                    f["kind"] = "int"
+                    f["min"] = value if f["min"] is None else min(f["min"], value)
+                    f["max"] = value if f["max"] is None else max(f["max"], value)
+                elif isinstance(value, str):
+                    f["kind"] = "string"
+                    f["values"].add(value)
+                else:
+                    f["kind"] = "other"
+        except Exception:
+            logger.exception("learn observe failed")
+
+    def _learn_clear(self) -> None:
+        """Discard all learned observations."""
+        self._learned.clear()
+
+    def learn_summary(self) -> dict[str, Any]:
+        """Observed-but-unauthorised traffic summary (counts only)."""
+        return {
+            "learn_mode": bool(getattr(self.config, "learn_mode", False)),
+            "tools": {
+                tool: {
+                    "calls": data["calls"],
+                    "agents": sorted(data["agent_ids"]),
+                    "tools_seen": 1,
+                }
+                for tool, data in self._learned.items()
+            },
+        }
+
+    def draft_policy(self) -> str:
+        """Generate a draft policy YAML from learned observations.
+
+        The draft infers, per observed tool:
+          - agent_id / source / destination from the observed traffic
+            (fnmatch-special characters escaped to literal matching)
+          - allow lists for string fields with low cardinality (<= 6 values)
+          - min/max bounds for integer fields
+          - required fields observed in every call
+        The draft is a PROPOSAL: the operator reviews, edits, and saves it
+        through the policy editor. Learning never authorises traffic.
+        """
+        if not self._learned:
+            return ""
+        lines: list[str] = [
+            "# DRAFT policy generated by raucle learn mode.",
+            "#",
+            "# Every rule below was inferred from OBSERVED traffic that the gate",
+            "# DENIED. Review each constraint, tighten where the business context",
+            "# demands it, then save + reload to activate. Learning never",
+            "# authorises traffic on its own.",
+            "version: 1",
+            "issuer: learned.draft.review",
+            "policies:",
+        ]
+        for tool, data in sorted(self._learned.items()):
+            agents = sorted(data["agent_ids"])
+            sources = sorted(data["sources"])
+            dests = sorted(data["destinations"])
+            agent_id = agents[0] if agents else f"agent:{tool}"
+            src = sources[0] if sources else "*"
+            dst = dests[0] if dests else "*"
+            lines.append(f"  - tool: {tool}")
+            lines.append(f"    agent_id: {agent_id}")
+            lines.append("    ttl_seconds: 300")
+            lines.append(f'    source: "{src}"')
+            lines.append(f'    destination: "{dst}"')
+            cons: list[str] = []
+            allow_map: dict[str, list[str]] = {}
+            max_map: dict[str, int] = {}
+            min_map: dict[str, int] = {}
+            required: list[str] = []
+            for fname, f in sorted(data["fields"].items()):
+                if f["kind"] == "string" and 0 < len(f["values"]) <= 6:
+                    allow_map[fname] = sorted(f["values"])
+                if f["kind"] == "int":
+                    # Pad bounds 10% headroom for the observed range.
+                    span = max(f["max"] - f["min"], 1)
+                    max_map[fname] = f["max"] + max(1, span // 10)
+                    if f["min"] is not None and f["min"] > 0:
+                        min_map[fname] = max(0, f["min"] - max(1, span // 10))
+                if f["seen"] >= data["calls"] and fname not in allow_map:
+                    required.append(fname)
+            if allow_map:
+                cons.append("      allow:")
+                for field, values in allow_map.items():
+                    rendered = ", ".join(f'"{v}"' if isinstance(v, str) else str(v) for v in values)
+                    cons.append(f"        {field}: [{rendered}]")
+            if max_map:
+                cons.append("      max:")
+                for field, v in max_map.items():
+                    cons.append(f"        {field}: {v}")
+            if min_map:
+                cons.append("      min:")
+                for field, v in min_map.items():
+                    cons.append(f"        {field}: {v}")
+            if required:
+                req = ", ".join(f'"{f}"' for f in required)
+                cons.append(f"      require: [{req}]")
+            if cons:
+                lines.append("    constraints:")
+                lines.extend(cons)
+            else:
+                lines.append("    constraints: {}")
+            calls = data["calls"]
+            lines.append(f'    description: "Draft from {calls} observed call(s); review"')
+            lines.append("")
+        return chr(10).join(lines)
 
     @staticmethod
     def _apply_decision(

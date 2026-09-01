@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project files
 COPY pyproject.toml README.md ./
 COPY raucle/ raucle/
+COPY scripts/ scripts/
 
 # Install raucle with gateway extras
 RUN pip install --no-cache-dir -e ".[dev,compliance,rules,server]"

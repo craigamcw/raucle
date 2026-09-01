@@ -48,11 +48,11 @@ class TestCommitArgs:
         r2 = commit_args({"args": {"x": [1, 2, 4]}})
         assert r1 != r2
 
-    def test_type_confusion_changes_root(self):
+    def test_type_confusion_rejected(self):
         # 1 (int) vs 1.0 (float) have different canonical encodings... except
         # floats are rejected entirely by canonicalisation.
-        r1 = commit_args({"amount": 1})
-        with pytest.raises(Exception):
+        assert commit_args({"amount": 1}) is not None
+        with pytest.raises(ValueError):
             commit_args({"amount": 1.5})
 
     def test_all_leaves_sha256(self):

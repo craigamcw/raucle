@@ -183,36 +183,21 @@ def _starts_with_any(value: Any, prefixes: list[str]) -> bool:
     )
 
 
-#: Constraint kind -> (required-arg presence, evaluator).
-#: Evaluators receive (constraint_value, disclosed_fields) and return
-#: SATISFIED / VIOLATED / UNKNOWN semantics via tri-state strings.
-_EVALUATORS: dict[str, tuple[bool, Any]] = {
-    "allowed_values": (
-        True,
-        lambda c, d: {
-            f: (_value_in(d[f], allowed) if f in d else None) for f, allowed in c.items()
-        },
-    ),
-    "forbidden_values": (
-        True,
-        lambda c, d: {
-            f: (_value_not_in(d[f], forbidden) if f in d else None) for f, forbidden in c.items()
-        },
-    ),
-    "max_value": (
-        True,
-        lambda c, d: {f: (_le(d[f], bound) if f in d else None) for f, bound in c.items()},
-    ),
-    "min_value": (
-        True,
-        lambda c, d: {f: (_ge(d[f], bound) if f in d else None) for f, bound in c.items()},
-    ),
-    "starts_with": (
-        True,
-        lambda c, d: {
-            f: (_starts_with_any(d[f], prefixes) if f in d else None) for f, prefixes in c.items()
-        },
-    ),
+#: Constraint kind -> evaluator. Evaluators receive (constraint_value,
+#: disclosed_fields) and return a per-field tri-state: True = passes,
+#: False = violates, None = field not disclosed (UNKNOWN).
+_EVALUATORS: dict[str, Any] = {
+    "allowed_values": lambda c, d: {
+        f: (_value_in(d[f], allowed) if f in d else None) for f, allowed in c.items()
+    },
+    "forbidden_values": lambda c, d: {
+        f: (_value_not_in(d[f], forbidden) if f in d else None) for f, forbidden in c.items()
+    },
+    "max_value": lambda c, d: {f: (_le(d[f], bound) if f in d else None) for f, bound in c.items()},
+    "min_value": lambda c, d: {f: (_ge(d[f], bound) if f in d else None) for f, bound in c.items()},
+    "starts_with": lambda c, d: {
+        f: (_starts_with_any(d[f], prefixes) if f in d else None) for f, prefixes in c.items()
+    },
 }
 
 
@@ -236,7 +221,7 @@ def recheck_constraints(
     """
     results: dict[str, str] = {}
 
-    for kind, (has_arg_map, evaluator) in _EVALUATORS.items():
+    for kind, evaluator in _EVALUATORS.items():
         if kind not in constraints:
             continue
         c = constraints[kind]

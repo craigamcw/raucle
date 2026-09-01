@@ -1,0 +1,210 @@
+# Raucle Gateway - UK Government and Public Sector Policy
+#
+# Covers: benefits eligibility, tax/border queries, planning applications,
+#         DBS checks, FOI requests, casework triage
+# Roles: benefits agent, tax assistant, casework officer, border officer,
+#        FOI processor
+#
+# Policy design notes (GOV context):
+#   - High-volume, low-risk public information tools run wide open
+#   - Casework actions are tightly scoped to case types and departments
+#   - Sensitive record access (DBS, immigration status) requires explicit
+#     case references and denied for bulk/unattributed access
+#   - Payments to citizens are bounded and require award references
+#
+# This file is only loaded if the gateway's policy_dir includes it.
+# Multiple policy files can coexist - the gateway finds the first
+# matching rule for each tool call by source/destination.
+
+version: 1
+issuer: gov.uk.demo
+
+policies:
+  # ---------------------------------------------------------------
+  # Benefits agent: citizen-facing eligibility and payment status
+  # ---------------------------------------------------------------
+  - tool: check_benefit_entitlement
+    agent_id: agent:benefits-assistant
+    ttl_seconds: 600
+    source: "agent:benefits*"
+    destination: "dwp-benefits*"
+    constraints:
+      allow:
+        benefit_type: ["universal-credit", "pip", "attendance-allowance", "carers-allowance"]
+      require: [citizen_ref, benefit_type]
+    description: "Check entitlement for standard benefits; requires citizen reference"
+
+  - tool: lookup_payment_history
+    agent_id: agent:benefits-assistant
+    ttl_seconds: 600
+    source: "agent:benefits*"
+    destination: "dwp-benefits*"
+    constraints:
+      allow:
+        citizen_ref: ["CIT-001", "CIT-002", "CIT-003", "CIT-004", "CIT-005"]
+      max:
+        months_back: 12
+      require: [citizen_ref, months_back]
+    description: "Payment history for known citizens, last 12 months"
+
+  - tool: schedule_benefit_payment
+    agent_id: agent:benefits-assistant
+    ttl_seconds: 300
+    source: "agent:benefits*"
+    destination: "dwp-payments*"
+    constraints:
+      allow:
+        benefit_type: ["universal-credit", "pip", "attendance-allowance", "carers-allowance"]
+      max:
+        amount: 2500
+      min:
+        amount: 1
+      require: [citizen_ref, benefit_type, amount, award_ref]
+    description: "Schedule standard payments; requires award reference, max £2,500"
+
+  - tool: flag_fraud_suspected
+    agent_id: agent:benefits-assistant
+    ttl_seconds: 300
+    source: "agent:benefits*"
+    destination: "fraud-referral*"
+    constraints:
+      require: [citizen_ref, reason, evidence_summary]
+      forbidden_combinations:
+        - [citizen_ref, close_case]
+    description: "Refer suspected fraud to investigators with documented reason"
+
+  # ---------------------------------------------------------------
+  # Tax assistant: HMRC self-assessment support
+  # ---------------------------------------------------------------
+  - tool: lookup_tax_account
+    agent_id: agent:tax-assistant
+    ttl_seconds: 600
+    source: "agent:tax*"
+    destination: "hmrc-core*"
+    constraints:
+      allow:
+        utr: ["UTR-1001", "UTR-1002", "UTR-1003"]
+      require: [utr]
+    description: "View a known taxpayer's account summary"
+
+  - tool: calculate_tax_estimate
+    agent_id: agent:tax-assistant
+    ttl_seconds: 600
+    source: "agent:tax*"
+    destination: "hmrc-calculator*"
+    constraints:
+      max:
+        annual_income: 500000
+      min:
+        annual_income: 0
+      require: [annual_income, tax_year]
+    description: "Estimate liability for the current tax year"
+
+  - tool: submit_self_assessment
+    agent_id: agent:tax-assistant
+    ttl_seconds: 300
+    source: "agent:tax*"
+    destination: "hmrc-filing*"
+    constraints:
+      allow:
+        utr: ["UTR-1001", "UTR-1002", "UTR-1003"]
+        filing_status: ["complete", "draft"]
+      deny:
+        filing_status: ["backdated-amendment"]
+      require: [utr, filing_status]
+    description: "File or draft self-assessment; no backdated amendments"
+
+  # ---------------------------------------------------------------
+  # Casework officer: planning and permit applications
+  # ---------------------------------------------------------------
+  - tool: retrieve_planning_application
+    agent_id: agent:casework-officer
+    ttl_seconds: 600
+    source: "agent:casework*"
+    destination: "planning-portal*"
+    constraints:
+      allow:
+        application_type: ["householder", "full", "change-of-use", "listed-building"]
+      require: [application_ref, application_type]
+    description: "Retrieve planning applications by reference"
+
+  - tool: update_case_notes
+    agent_id: agent:casework-officer
+    ttl_seconds: 300
+    source: "agent:casework*"
+    destination: "case-management*"
+    constraints:
+      allow:
+        case_type: ["planning", "environmental-health", "licensing"]
+      max:
+        note_length: 10000
+      require: [case_ref, case_type, note_content]
+    description: "Append officer notes to an open case"
+
+  - tool: recommend_decision
+    agent_id: agent:casework-officer
+    ttl_seconds: 300
+    source: "agent:casework*"
+    destination: "case-management*"
+    constraints:
+      allow:
+        recommendation: ["approve", "refuse", "request-more-info"]
+      deny:
+        recommendation: ["approve", "delegated-approval"]
+      require: [case_ref, recommendation]
+    description: "Draft a recommendation; final approval is always a human decision"
+
+  # ---------------------------------------------------------------
+  # Border officer: status checks (fail-closed sensitive)
+  # ---------------------------------------------------------------
+  - tool: check_immigration_status
+    agent_id: agent:border-officer
+    ttl_seconds: 120
+    source: "agent:border*"
+    destination: "home-office-status*"
+    constraints:
+      allow:
+        check_purpose: ["port-entry", "visa-application", "employer-verification"]
+      deny:
+        record_class: ["asylum", "victims-slavery-trafficking"]
+      require: [person_ref, check_purpose, officer_id]
+    description: "Status checks for defined purposes only; asylum/trafficking records excluded"
+
+  # ---------------------------------------------------------------
+  # DBS (criminal record) checks: strictly reference-scoped
+  # ---------------------------------------------------------------
+  - tool: request_dbs_check
+    agent_id: agent:dbs-processor
+    ttl_seconds: 300
+    source: "agent:dbs*"
+    destination: "dbs-service*"
+    constraints:
+      allow:
+        check_level: ["basic", "standard", "enhanced"]
+      require: [applicant_ref, check_level, position_applied_for, employer_ref]
+    description: "DBS checks need the role and employer, not just a name"
+
+  # ---------------------------------------------------------------
+  # FOI processor: public disclosure
+  # ---------------------------------------------------------------
+  - tool: search_foi_register
+    agent_id: agent:foi-processor
+    ttl_seconds: 600
+    source: "agent:foi*"
+    destination: "foi-register*"
+    constraints:
+      require: [search_term]
+    description: "Search published FOI responses"
+
+  - tool: draft_foi_response
+    agent_id: agent:foi-processor
+    ttl_seconds: 300
+    source: "agent:foi*"
+    destination: "foi-register*"
+    constraints:
+      allow:
+        response_type: ["full-disclosure", "partial-disclosure", "exempt-section-12"]
+      deny:
+        response_type: ["exempt-section-23", "exempt-section-27", "exempt-section-31"]
+      require: [request_ref, response_type]
+    description: "Draft disclosures; security-service and prejudice exemptions stay human"

@@ -79,6 +79,16 @@ def main() -> None:
         users.add_user(config.admin_api_key, "admin", "Default Admin")
         logger.info("Default admin user created from RAUCLE_ADMIN_KEY")
 
+    # Read-only demo account (auditor role): powers the admin panel's
+    # View Demo button. Dashboard, connections and receipts only; every
+    # privileged route 403s for this role.
+    import os as _os
+
+    demo_key = _os.environ.get("RAUCLE_DEMO_KEY", "")
+    if demo_key:
+        users.add_user(demo_key, "auditor", "Demo (read-only)")
+        logger.info("Read-only demo user created from RAUCLE_DEMO_KEY")
+
     logger.info("Starting gateway API on %s:%d", config.host, config.port)
     logger.info("Starting admin panel on %s:%d", config.host, config.admin_port)
 

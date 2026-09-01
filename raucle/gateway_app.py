@@ -1040,7 +1040,7 @@ body.demo .btn-primary{display:none}
           </select>
           <label class="toggle"><input type="checkbox" id="topoMotion" checked onchange="topoRender()"> Animated traffic</label>
           <span style="flex:1"></span>
-          <span style="font-size:0.75rem;color:#8b919e">Click a node to isolate its paths and filter the table below. Drag to pan, scroll to zoom.</span>
+          <span style="font-size:0.75rem;color:#8b919e">Zoomed to the busiest nodes at first. Drag to pan, scroll to zoom, click a node to filter the table below.</span>
         </div>
         <div id="topoCanvas" class="topo-canvas">
           <svg class="topo-svg" id="topoSvg"></svg>
@@ -1743,14 +1743,17 @@ function topoRender() {
 }
 
 // ===== topology view model: zoom + pan =====
-let topoScale = 1, topoPanX = 0, topoPanY = 0, topoFitPending = true;
+let topoScale = 1, topoPanX = 0, topoPanY = 0, topoFitPending = false, topoInitPending = true;
 
 function applyTopoView() {
   const svg = document.getElementById('topoSvg');
   const content = document.getElementById('topoContent');
   const canvas = document.getElementById('topoCanvas');
   if (!svg || !content || !canvas) return;
-  if (topoFitPending) {
+  if (topoInitPending) {
+    topoInitPending = false;
+    frameTopActive(6);
+  } else if (topoFitPending) {
     const cw = canvas.clientWidth || 1000, ch = canvas.clientHeight || 420;
     const contentW = TOPO_COL_X.destination + TOPO_W + 60;
     let maxY = 0;
@@ -1768,6 +1771,36 @@ function applyTopoView() {
   svg.style.transform = t;
   svg.style.transformOrigin = '0 0';
   content.style.transformOrigin = '0 0';
+}
+
+// Initial view: zoom in on the k most active nodes (by observed calls).
+// The rest of the graph stays reachable by panning or zooming out; this
+// only runs once, on the first render that has nodes.
+function frameTopActive(k) {
+  const canvas = document.getElementById('topoCanvas');
+  if (!canvas || !topoNodes.length) { topoFitPending = true; return; }
+  const cw = canvas.clientWidth || 1000, ch = canvas.clientHeight || 420;
+  const pos = topoLayout();
+  const ranked = topoNodes.slice().sort(
+    (a, b) => (((b.meta || {}).n) || 0) - (((a.meta || {}).n) || 0)
+  );
+  const focus = ranked.slice(0, k);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  focus.forEach(n => {
+    const p = pos[n.id];
+    if (!p) return;
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x + TOPO_W);
+    maxY = Math.max(maxY, p.y + TOPO_NODE_H);
+  });
+  if (!isFinite(minX)) { topoFitPending = true; return; }
+  const pad = 30;
+  const bw = (maxX - minX) + pad * 2, bh = (maxY - minY) + pad * 2;
+  let scale = Math.min((cw - 20) / bw, (ch - 20) / bh, 1.5);
+  topoScale = Math.max(0.3, scale);
+  topoPanX = (cw - (minX + maxX) * topoScale) / 2;
+  topoPanY = (ch - (minY + maxY) * topoScale) / 2;
 }
 
 function topoZoomIn() { topoZoomBy(1.25); }

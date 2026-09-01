@@ -966,6 +966,23 @@ ADMIN_PANEL_HTML = """<!DOCTYPE html>
 body.demo [data-tab-id="policies"], body.demo [data-tab-id="siem"], body.demo [data-tab-id="users"], body.demo [data-tab-id="config"], body.demo [data-tab-id="topo-link"]{display:none}
 body.demo .btn-primary{display:none}
 
+/* Guided tour */
+#tourHost{position:fixed;inset:0;pointer-events:none;z-index:9000}
+.tour-card{position:fixed;width:320px;background:#fff;border:1px solid #171717;border-radius:12px;padding:16px 18px 12px;box-shadow:0 12px 40px rgba(0,0,0,0.18);pointer-events:auto;animation:tourIn .25s ease}
+@keyframes tourIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.tour-step{font-size:0.68rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#8b919e;margin-bottom:8px}
+.tour-body{font-size:0.85rem;line-height:1.5;color:#171717;margin-bottom:14px}
+.tour-actions{display:flex;justify-content:space-between;align-items:center}
+.tour-skip{background:none;border:none;color:#8b919e;font-size:0.75rem;cursor:pointer;padding:6px 4px;font-family:inherit}
+.tour-skip:hover{color:#171717}
+.tour-next{background:#171717;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:0.8rem;font-weight:600;cursor:pointer;font-family:inherit}
+.tour-next:hover{background:#3a3a3a}
+.tour-dots{display:flex;gap:5px;justify-content:center;margin-top:10px}
+.tour-dots span{width:6px;height:6px;border-radius:50%;background:#e0e0e0;display:inline-block}
+.tour-dots span.on{background:#171717}
+.tour-replay{background:none;border:1px solid var(--border);color:#8b919e;font-size:0.72rem;padding:4px 12px;border-radius:999px;cursor:pointer;font-family:inherit;margin-left:auto}
+.tour-replay:hover{border-color:#171717;color:#171717}
+
 </style>
 </head>
 <body>
@@ -994,12 +1011,14 @@ body.demo .btn-primary{display:none}
 </div>
 
 <div id="main" class="hidden">
+  <div id="tourHost"></div>
   <div id="demoBanner" class="hidden" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;margin-bottom:14px;background:#f8f9fb;border:1px solid #e5e7ec;border-radius:12px">
     <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;font-weight:600;color:#fff;background:#22c55e;padding:3px 10px;border-radius:999px">
       <span style="width:6px;height:6px;border-radius:50%;background:#fff;display:inline-block"></span>
       DEMO MODE
     </span>
     <span style="font-size:0.82rem;color:#3a3f4b">Read-only view of a live deployment with simulated agent traffic.</span>
+    <button class="tour-replay" onclick="tourRestart()">Replay tour</button>
     <span style="flex:1"></span>
     <div id="scenarioPicker" style="display:flex;gap:8px"></div>
     <button class="btn" style="padding:6px 14px;font-size:0.8rem" onclick="location.reload()">Exit Demo</button>
@@ -1525,7 +1544,17 @@ async function enterDemo() {
   document.getElementById('demoBanner').classList.remove('hidden');
   buildScenarioPicker();
   showMainDemo();
+  tourMaybeStart();
 }
+// ?demo=1 (or #demo) auto-enters demo mode after the page settles
+window.addEventListener('load', () => {
+  const q = new URLSearchParams(window.location.search);
+  const h = window.location.hash || '';
+  if (q.get('demo') === '1' || h.startsWith('#demo')) {
+    const btn = document.querySelector('[onclick*="enterDemo"]');
+    if (btn) btn.click();
+  }
+});
 
 function buildScenarioPicker() {
   const bar = document.getElementById('scenarioPicker');
@@ -1547,6 +1576,58 @@ function showMainDemo() {
   });
   loadAll();
 }
+
+// ================= GUIDED TOUR =================
+const TOUR_SEEN_KEY = 'raucle_demo_tour_done_v1';
+let tourStep = 0, tourBox = null, tourTimer = null;
+const TOUR_STEPS = [
+  {tab:'connections', target:'#liveMode', title:'This is live traffic',
+   body:'Real agent tool calls, gated in real time. Green lines are allowed calls; red ones were denied by policy. Use the scenario buttons to focus on banking, government or health.'},
+  {tab:'connections', target:'#topoDecisionFilter', title:'Filter what you watch',
+   body:'Narrow the flow to allows, denies or escalations. Click any node in the topology to filter the whole view to that agent or tool.'},
+  {tab:'dashboard', target:'#statsGrid', title:'Decisions at a glance',
+   body:'Counts of every gate decision by tool, with latency. Denied calls are as important as allowed ones: they are the policy working.'},
+  {tab:'receipts', target:'#receiptsView', title:'Every decision leaves a receipt',
+   body:'Each receipt is signed and content-addressed. Take them offline: an auditor can verify the chain without contacting us, or any vendor.'},
+  {tab:'learn', target:'#tab-learn', title:'Want the depth?',
+   body:'A short guided walkthrough of capability tokens, policies and what the proofs guarantee. When you are done, close the bubbles and explore freely.'},
+];
+function tourShow(){
+  const s=TOUR_STEPS[tourStep];
+  if(!s){tourEnd(true);return;}
+  document.querySelectorAll('.tab').forEach(x=>{const oc=x.getAttribute('onclick')||'';if(oc.includes("'"+s.tab+"'"))x.click();});
+  setTimeout(()=>{
+    const el=document.querySelector(s.target)||document.getElementById('tab-'+s.tab);
+    if(!el){tourStep++;tourShow();return;}
+    const r=el.getBoundingClientRect();
+    let bx=Math.min(Math.max(r.left+r.width/2-160,12),window.innerWidth-332);
+    let by=Math.max(r.bottom+12,12);
+    if(by+170>window.innerHeight-12) by=Math.max(12,r.top-186);
+    const host=document.getElementById('tourHost');
+    host.innerHTML=`<div class="tour-card" style="left:${bx}px;top:${by}px">
+      <div class="tour-step">Step ${tourStep+1} of ${TOUR_STEPS.length} · ${s.title}</div>
+      <div class="tour-body">${s.body}</div>
+      <div class="tour-actions">
+        <button class="tour-skip" onclick="tourEnd(false)">Skip tour</button>
+        <button class="tour-next" onclick="tourNext()">${tourStep+1<TOUR_STEPS.length?'Next':'Start exploring'}</button>
+      </div>
+      <div class="tour-dots">${TOUR_STEPS.map((_,i)=>`<span class="${i===tourStep?'on':''}"></span>`).join('')}</div>
+    </div>`;
+  },220);
+}
+function tourNext(){tourStep++;tourShow();}
+function tourEnd(seen){
+  clearTimeout(tourTimer);tourStep=0;
+  const host=document.getElementById('tourHost');if(host)host.innerHTML='';
+  try{localStorage.setItem(TOUR_SEEN_KEY,seen?'1':'1');}catch(e){}
+}
+function tourMaybeStart(){
+  let done=false;
+  try{done=localStorage.getItem(TOUR_SEEN_KEY)==='1';}catch(e){}
+  if(done)return;
+  tourStep=0;tourShow();
+}
+function tourRestart(){try{localStorage.removeItem(TOUR_SEEN_KEY);}catch(e){}tourStep=0;tourShow();}
 
 // ================= EMBEDDED LIVE TOPOLOGY =================
 // Hero palette: ink #111218, green #22c55e, deny red #dd6b78, warn #e5b85c,

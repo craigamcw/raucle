@@ -105,9 +105,11 @@ Beyond per-call enforcement, raucle ships the cross-organisation trust primitive
 - **Agent Trust Registry** ([`trust_registry`](raucle/trust_registry.py)) — an append-only, hash-chained, operator-signed directory of issuer keys. Org B verifies Org A's capability tokens by resolving the shared registry; revocation is fail-closed, rollback is detected via a signed freshness anchor. [Tutorial](docs/getting-started/10-trust-registry.md).
 - **Cross-org handshake** ([`handshake`](raucle/handshake.py)) — a signed request/accept/ack exchange between two organisations' agents, with trust resolved from the registry and replay-bound acknowledgement receipts. [Tutorial](docs/getting-started/11-cross-org-handshake.md).
 - **Agent passport** ([`passport`](raucle/passport.py)) — an issuer-countersigned, registry-anchored identity document wrapping an agent's `CapabilityStatement`: one portable artifact any framework (LangChain, CrewAI, MCP, A2A, Agent Framework) can verify offline before enforcing scope. [Tutorial](docs/getting-started/13-agent-passport.md).
-- **Compliance evidence packs** ([`compliance`](raucle/compliance.py)) — maps a signed receipt chain to EU AI Act, ISO/IEC 42001, and SOC 2 controls. Deliberately honest: it is an *evidence map*, not a conformance attestation — controls report SATISFIED, PARTIAL, or OUT_OF_SCOPE, and SATISFIED requires cryptographic verification of the underlying chain. [Tutorial](docs/getting-started/12-compliance-evidence.md). Raucle also maps to the NCSC [Cyber Assessment Framework (CAF v3.2)](docs/security/ncsc-caf-mapping.md) and the NCSC ML security principles, for UK public-sector and NIS-regulated assessments.
+- **Conformance re-verification with selective disclosure** ([`conformance`](raucle/conformance.py)) — prove a receipt's hidden call arguments satisfied the policy, disclosing only the fields a verifier requests. Field-level Merkle commitments (JCS-canonical leaves, UTF-16 ordering, SHA-256 throughout, deliberately zk-portable) with a fail-closed partial constraint re-check: per-constraint SATISFIED / VIOLATED / UNKNOWN verdicts re-derived independently of the operator's runtime. Design: [`docs/spec/provenance/v1/conformance-reverification.md`](docs/spec/provenance/v1/conformance-reverification.md). This is the Layer 1 of a three-layer roadmap toward zkVM proofs of gate conformance with zero disclosure.
 
-These four modules went through nine rounds of iterative adversarial security review (independent codex auditor, find → fix → re-verify) before merging; every fix carries a regression test.
+**Compliance evidence packs** ([`compliance`](raucle/compliance.py)) — maps a signed receipt chain to EU AI Act, ISO/IEC 42001, and SOC 2 controls. Deliberately honest: it is an *evidence map*, not a conformance attestation — controls report SATISFIED, PARTIAL, or OUT_OF_SCOPE, and SATISFIED requires cryptographic verification of the underlying chain. [Tutorial](docs/getting-started/12-compliance-evidence.md). Raucle also maps to the NCSC [Cyber Assessment Framework (CAF v3.2)](docs/security/ncsc-caf-mapping.md) and the NCSC ML security principles, for UK public-sector and NIS-regulated assessments.
+
+The registry, handshake, passport, and compliance modules went through nine rounds of iterative adversarial security review (independent codex auditor, find → fix → re-verify) before merging; every fix carries a regression test. The conformance re-verification layer is new and has not yet been through that review cycle; treat it as experimental until it has.
 
 ---
 
@@ -160,7 +162,7 @@ are the product; detection is one module).
 | `import raucle_detect` | `import raucle` (old imports keep working via a shim, with a `DeprecationWarning`) |
 | `raucle-detect` CLI | `raucle` (old command kept as a deprecated alias) |
 | `RAUCLE_DETECT_*` env vars | `RAUCLE_*` (legacy names remain supported) |
-| Go module `github.com/craigamcw/raucle-detect/reference/provenance-go` | `github.com/craigamcw/raucle/reference/provenance-go` — **breaking** for Go imports; update the import path |
+| Go module `github.com/epic28-ltd/raucle/reference/provenance-go` | `github.com/epic28-ltd/raucle/reference/provenance-go` — **breaking** for Go imports; update the import path |
 
 **Wire formats are unchanged**: the provenance receipt `iss` identifier
 (`"raucle-detect/provenance"`), receipt/audit/registry formats, signatures,

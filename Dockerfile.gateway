@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="Raucle Gateway"
 LABEL org.opencontainers.image.description="Enterprise AI agent governance gateway"
-LABEL org.opencontainers.image.source="https://github.com/craigamcw/raucle"
+LABEL org.opencontainers.image.source="https://github.com/epic28-ltd/raucle"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 WORKDIR /app

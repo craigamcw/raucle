@@ -129,7 +129,7 @@ to remove platform variation; reassess for v0.2 once .NET 10 GA.
 ## Track
 
 A skeleton repo will be created at
-`github.com/craigamcw/raucle-receipt-dotnet` once this proposal is
+`github.com/epic28-ltd/raucle-receipt-dotnet` once this proposal is
 green-lit. Initial scaffolding:
 
 ```

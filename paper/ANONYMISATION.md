@@ -35,7 +35,7 @@ identity strings (`raucle`, `craig`, `mcwilliams`, `craigamcw`,
 S&P treats the following as out-of-scope for double-blind under standard
 practice; these may remain public/identified without affecting review:
 
-- The `craigamcw/raucle` GitHub repository (public). Paper cites
+- The `epic28-ltd/raucle` GitHub repository (public). Paper cites
   the implementation as `[anonymised for blind review]` and does not
   link the repository in the PDF.
 - The raucle.com website. Paper does not reference it.

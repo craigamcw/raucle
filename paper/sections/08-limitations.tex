@@ -1,2 +1,96 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+We list limitations honestly. Several are direct consequences of the
+threat model in Section 2; the rest are practical scope decisions for
+this paper.
+
+\textbf{Bounded tool-call surface only.} VCD addresses tool calls.
+Free-form agent output remains unprotected. Composition with output-side
+defences (constitutional classifiers, output filtering) is
+straightforward in principle and a natural next step.
+
+\textbf{Schema expressivity.} The currently supported JSON Schema
+fragment is deliberately conservative. Extending to
+\texttt{oneOf}/\texttt{anyOf} is straightforward --- the SMT encoding
+becomes a disjunction over each branch. Extending to regex constraints
+on string fields is more interesting; we believe Z3's string theory is
+adequate for common cases (allowlisted prefixes, length bounds) and a
+future paper will report on the coverage of this extension.
+
+\textbf{Parameter-space side channels.} Discussed in Section 6.5. The
+mitigation is schema tightening --- replacing unbounded numeric fields
+with bounded enums where the application semantics permit. A
+combinatorial analysis of side-channel capacity per schema would be a
+useful addendum.
+
+\textbf{Confused-deputy attacks.} Multi-call attacks where each
+individual call is policy-compliant but the sequence violates an
+end-to-end property require provenance and dataflow analysis beyond the
+per-call gate. Our companion provenance layer addresses this; the
+integration ships in the reference implementation (the gateway routes
+every call through the gate and receipts the outcome).
+
+\textbf{Argument privacy in re-verification.} The selective-disclosure
+layer (§5) lets a verifier confirm constraint conformance from a chosen
+subset of fields, but a constraint touching an undisclosed field remains
+UNKNOWN, and converting every UNKNOWN to SATISFIED requires a zkVM or
+SNARK proof of the gate check over the hidden arguments. The commitment
+scheme is designed for exactly this port (SHA-256 leaves,
+domain-separated hashing, no exotic primitives); Layer 2 is future work.
+
+\textbf{Bootstrap and key management.} VCD reduces the trust problem
+from ``the model must be robust to all prompt injection'' to ``the
+issuer's private key must be uncompromised''. This is a substantial
+improvement but not zero. Standard HSM and key-rotation practices apply;
+the threat model treats compromise of the issuer's key as out of scope.
+
+\textbf{Intent extraction as a second trust boundary.} Every per-task
+token in this paper is minted from a policy derived from the user's
+prompt. For the evaluation we author those per-task policies by hand and
+pin them under a cryptographic hash anchor (§6.0, pre-registration).
+Production deployments cannot author policies by hand at scale; an
+intent-extraction component must convert each user prompt into a
+constraint set. Three credible designs exist, with progressively weaker
+security properties: (a) a rule-based parser written in a memory-safe
+language, audited and ideally formally verified, accepting only a
+bounded grammar of user intents; (b) a structured-output extractor
+(e.g.~JSON-schema-constrained LLM call) running in its own trust domain
+with its own per-task gate; (c) the agent's own LLM call producing a
+draft policy that is then reviewed by a human before being signed.
+Option (a) is the strongest and the only one that preserves the headline
+property end-to-end; option (b) introduces a new attack surface where a
+malicious user prompt could coerce the extractor into emitting an
+over-broad policy, but this surface is itself capability-gateable (the
+extractor calls only the policy-issuance tool, with constraints on the
+policy shape). Analysing the security of each option is beyond the scope
+of this paper and a clear direction for follow-up work.
+
+\textbf{Defender effort.} A platform operator must author both a JSON
+Schema and a policy for each tool. The SMT prover catches
+inconsistencies but does not invent either artefact. For tools whose
+semantics are not well-understood by the operator, this is real effort.
+We argue that the effort is well-spent: it is the same
+security-engineering work that good API design requires regardless of
+whether an LLM is involved.
+
+\textbf{Robustness to future model improvements.} As frontier models
+continue to improve at native instruction adherence, the no-defence
+baseline ASR will continue to fall --- Kimi-k2.6 (Moonshot, 2026)
+already exhibits a 0.0\% baseline in our banking measurement (§6.2). A
+reader might reasonably ask whether VCD's contribution shrinks when the
+model itself is robust. Two responses. First, the load-bearing empirical
+comparison throughout §6.2 is between text-side defences and VCD
+\emph{at equivalent security}; the benign-preservation gap is a property
+of how each defence reacts to legitimate prompts, not of how much attack
+reduction it must supply. On Kimi-k2.6 --- where no defence is
+\emph{needed} for security --- prompt-shields nonetheless collapses
+benign task completion to 34.7\% while VCD-full preserves it at
+near-baseline levels. Shields' collateral damage is independent of its
+security necessity; future model improvements widen rather than narrow
+this gap. Second, the \emph{durable} contribution of VCD is the portable
+cryptographic audit primitive (§7.5), which a more-robust model neither
+produces nor obviates: regulators auditing agent activity, downstream
+tools verifying authority, and partner organisations attesting
+capability delegation all require a verifiable record that no amount of
+model robustness supplies. The structural soundness theorems (§4) and
+the static upper bound (§6.2.1) likewise do not depend on the base
+model. We expect the qualitative findings to be invariant under forward
+model improvements.

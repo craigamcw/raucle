@@ -266,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--repo-url",
-        default="https://github.com/craigamcw/raucle",
+        default="https://github.com/epic28-ltd/raucle",
         help="Base URL for the raucle GitHub repo",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print result, do not write")

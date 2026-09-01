@@ -37,12 +37,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/craigamcw/raucle.git",
+    "url": "git+https://github.com/epic28-ltd/raucle.git",
     "directory": "reference/provenance-ts"
   },
   "homepage": "https://raucle.com/spec/provenance/v1",
   "bugs": {
-    "url": "https://github.com/craigamcw/raucle/issues"
+    "url": "https://github.com/epic28-ltd/raucle/issues"
   },
   "publishConfig": {
     "access": "public"

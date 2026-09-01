@@ -47,7 +47,7 @@ pip install raucle          # Python — ships inside the main library
 npm install @raucle/provenance     # TypeScript / Node >= 20
 cargo add raucle-provenance        # Rust
 dotnet add package Raucle.Provenance   # C# / .NET 8+
-go get github.com/craigamcw/raucle/reference/provenance-go  # Go
+go get github.com/epic28-ltd/raucle/reference/provenance-go  # Go
 ```
 
 Registry releases are cut by tagging `ref-v<version>` (see

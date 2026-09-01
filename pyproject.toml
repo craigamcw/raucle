@@ -95,9 +95,9 @@ raucle-aws-mcp = "raucle.broker.cli:main"
 
 [project.urls]
 Homepage = "https://raucle.com"
-Documentation = "https://github.com/craigamcw/raucle/tree/main/docs"
-Repository = "https://github.com/craigamcw/raucle"
-Issues = "https://github.com/craigamcw/raucle/issues"
+Documentation = "https://github.com/epic28-ltd/raucle/tree/main/docs"
+Repository = "https://github.com/epic28-ltd/raucle"
+Issues = "https://github.com/epic28-ltd/raucle/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["raucle", "raucle_detect"]

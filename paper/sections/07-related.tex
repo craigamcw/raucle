@@ -1,2 +1,320 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+\subsubsection{7.1 Prompt Injection and LLM-Specific
+Defences}\label{prompt-injection-and-llm-specific-defences}
+
+The original prompt-injection taxonomy is due to Perez and Ribeiro
+{[}@perez2022ignore{]}; the realistic indirect-injection threat model
+originated with Greshake et al. {[}@greshake2023not{]}. Subsequent
+defences fall into three families. \emph{Input perturbation} defences
+--- Spotlighting {[}@hines2024defending{]}, paraphrasing, retokenisation
+--- modify the agent's context so that untrusted regions are visually
+marked or syntactically distinguished. \emph{Output filtering} defences
+--- constitutional classifiers {[}@anthropic2024constitutional{]},
+commercial prompt shields --- apply a secondary model to the agent's
+output to catch policy violations. \emph{Training-time defences} ---
+StruQ {[}@chen2024struq{]}, SecAlign {[}@chen2025secalign{]},
+instruction-hierarchy fine-tuning --- modify the base model. All three
+families share the architectural property that they operate over
+unbounded natural language and provide statistical rather than
+structural guarantees. The empirical ceiling on these approaches against
+modern benchmarks sits around 14-31\% attack success, as Section 6
+reports.
+
+The benchmark literature --- AgentDojo {[}@debenedetti2024agentdojo{]},
+InjecAgent {[}@zhan2024injecagent{]}, TensorTrust, AdvBench --- has been
+instrumental in disciplining defence claims. We adopt AgentDojo and
+InjecAgent as our headline benchmarks because they specifically measure
+tool-call-mediated success, which is the class VCD addresses.
+
+\textbf{A note on policy-targeted text scanning versus generic PI
+detection.} In §6.2 the text-only configuration of VCD
+(\texttt{vcd\_text}) outperforms prompt-shields' DeBERTa detector on the
+less capable v3.2 model --- 0.7\% ASR with 79.9\% benign retention,
+versus shields' 7.6\% ASR at 33.3\% benign. We did not design
+\texttt{vcd\_text} to compete head-on with shields and we did not
+anticipate it would dominate; we offer the following mechanism. A
+generic PI detector classifies natural-language prose against patterns
+of \emph{injection-style} writing. The classifier is policy-agnostic ---
+it does not know what the agent is supposed to be allowed to do, and
+consequently must err toward conservatism on any text whose stylistic
+markers resemble its training distribution. On a less-capable base model
+whose reasoning trajectory is itself noisier, the detector's
+false-positive rate compounds: many legitimate user requests, expressed
+in the way real users write, look stylistically similar to injection
+prose. VCD's text scanner, by contrast, is policy-aware --- it carries
+the in-force capability's constraint set, and flags only content that
+would steer the agent toward calls those constraints disallow. The
+surface-form of the injection prose is irrelevant; only the structural
+pattern of ``this would induce a gate-disallowed call'' matters. On a
+more capable model, both detectors converge because the LLM's own
+discrimination eats up most of the marginal precision; on a less capable
+model, the policy-aware approach pays its full dividend. The argument is
+in line with the general observation that, where structure exists,
+structural enforcement strictly dominates statistical detection.
+
+Greshake et al.'s indirect-injection threat model {[}greshake2023not{]}
+is the closest framing to ours --- prompt injection as a
+privilege-escalation problem reachable via untrusted documents in the
+agent's context --- and the recent thread of work on ``spotlighting +
+tool authentication'' combinations explores adjacent ideas informally.
+None of this prior work provides cryptographic enforcement, attenuation
+invariants, or SMT-verified policy completeness, and to our knowledge
+none has been evaluated against AgentDojo or InjecAgent with a
+structurally-enforced gate.
+
+\subsubsection{7.2 Capability Discipline}\label{capability-discipline}
+
+Object capabilities were introduced by Levy {[}@levy1984capability{]}
+and developed by Mark Miller in his dissertation on robust composition
+{[}@miller2006robust{]}; major implementations include EROS
+{[}@shapiro1999eros{]}, KeyKOS, Caja, and seL4 {[}@klein2009sel4{]}.
+Macaroons {[}@birgisson2014macaroons{]} provide a particularly close
+analogue to our attenuation primitive, with HMAC-based chained
+restriction. The technical deltas are summarised in Table 1.
+
+\textbf{Table 1. Macaroons vs VCD capability tokens.}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Property
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Macaroons
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+VCD
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Cryptographic substrate & HMAC-SHA256 chain & Ed25519 signature per
+token \\
+Verifiable without issuer secret & No (verifier holds HMAC key) & Yes
+(verifier holds only the public key) \\
+Identifier & bearer-token byte string & content-addressed SHA-256 of
+canonical body \\
+Reassignment of identifier & possible (no binding) & precluded (id
+determines body) \\
+Constraint vocabulary & opaque caveat strings & typed constraint kinds
+with lattice meet \\
+Mechanised attenuation soundness & no & yes (Lean 4, §4) \\
+Binding to a verified policy artifact & no &
+\texttt{policy\_proof\_hash} field \\
+Audit-graph composition & informal & content-addressed; chains into
+Merkle log \\
+\end{longtable}
+
+The deltas are not academic. The public-key-verifiable property means a
+downstream tool implementation can independently verify a token without
+sharing a secret with the issuer --- relevant in multi-vendor agent
+deployments. The content-addressed identifier blocks a class of
+token-substitution attacks that affects bearer-token systems generally.
+The typed constraint vocabulary is what enables the SMT bridge in
+Theorem 3.
+
+The industry-familiar comparison is to OAuth 2.0 scopes. OAuth's
+\texttt{scope=read:email\ scope=send:email} model expresses
+\emph{permission-level} restrictions; VCD's constraints are
+\emph{value-level} (the per-call \texttt{recipient}, \texttt{amount},
+and so on are checked, not just the verb). Macaroons' caveats are
+value-level but informal strings; VCD's are a typed vocabulary that
+admits SMT verification. OAuth scopes are documented; VCD's attenuation
+invariants are mechanically enforced in Lean. OAuth tokens carry no
+proof of policy completeness; VCD tokens cite a SMT-verified
+\texttt{policy\_proof\_hash}. The three frameworks (OAuth scopes,
+Macaroons, VCD) lie on a progression of structural commitment: OAuth
+scopes are a vocabulary, Macaroons add chained attenuation under HMAC,
+VCD adds value-level constraints + mechanised soundness + verified
+policy citation.
+
+Capability-based approaches to LLM agents have been discussed informally
+in community forums and as part of broader ``tool allowlist'' practices
+in major agent frameworks, but to our knowledge no prior published work
+provides the mechanised attenuation invariants, cryptographic gate
+enforcement, and empirical evaluation on prompt-injection benchmarks
+that VCD combines.
+
+\textbf{CaMeL.} The closest contemporaneous published work is CaMeL
+{[}@debenedetti2025camel{]}, which independently identifies
+capability-style metadata as a route to structurally-enforced agent
+safety. CaMeL splits the agent into a \emph{privileged} LLM that emits
+restricted Python and a \emph{quarantined} LLM that processes untrusted
+data, with capability metadata flowing through interpreter values; on
+AgentDojo, CaMeL reports 77\% benign task completion at provable
+security, against an unprotected baseline of 84\%. CaMeL and VCD share
+the framing --- move enforcement out of the model into a
+structurally-checked layer --- and on this framing both contribute. The
+technical deltas are: (a) CaMeL's soundness is the dynamic semantics of
+a custom Python interpreter; VCD's three soundness theorems are
+mechanised in Lean 4. (b) CaMeL requires architectural surgery --- two
+LLMs, a custom planner/quarantine split --- which is incompatible with
+deployed single-LLM agents and with the Model Context Protocol; VCD is a
+sidecar gate that drops into existing agents without changing the LLM
+call. (c) CaMeL's capabilities are interpreter-local metadata that exist
+only within a single agent's execution; VCD's capability tokens are
+public-key-verifiable signed artefacts that travel across organisations,
+clouds, and tool implementations. (d) CaMeL relies on the user to author
+policies inline; VCD binds each policy to an SMT-verified
+\texttt{policy\_proof\_hash} whose verification is independent of the
+issuer. The two approaches are not mutually exclusive --- a CaMeL-style
+dual-LLM architecture composed with VCD-style cryptographic
+authorisation is strictly stronger than either alone --- but only VCD
+produces a portable audit artefact, and only VCD's soundness is
+machine-checked.
+
+\textbf{Microsoft Agent Governance Toolkit.} A second contemporaneous
+effort is the Microsoft Agent Governance Toolkit (AGT), released as
+seven MIT-licensed packages on 2 April 2026 {[}@microsoft2026agt{]} ---
+Agent OS (an in-process policy gate), AgentMesh (SPIFFE/Ed25519 agent
+identity), Agent Runtime (rings 0--3 sandbox), Agent Hypervisor
+(Merkle-chained audit log), an MCP security gateway, and SRE /
+compliance tooling. AGT and VCD overlap on the abstract claim ---
+structural enforcement at the tool-call boundary, cryptographic
+identity, append-only audit --- and on the deployment surface, since
+both target the Microsoft Agent Framework's \texttt{FunctionMiddleware}
+hook. The differences are load-bearing for what each contributes to the
+literature. (a) \textbf{Soundness substrate.} AGT validates policy
+decisions via conformance-test suites; VCD ships three theorems
+mechanised in Lean 4 with zero \texttt{sorry}s (§4), each externally
+re-checkable by rebuilding the published Lean development. (b)
+\textbf{Audit artefact.} AGT's audit chain is operator-rooted: the chain
+root is signed by the deploying organisation's audit key, and verifiers
+need an attestation that the operator's audit-key rotation was correctly
+performed. VCD receipts are content-addressed signed artefacts naming,
+by hash, the schema, the policy proof, and the cited Lean theorem id; a
+verifier holding only the issuer's published material can confirm the
+receipt without contacting the operator (§7.5). (c) \textbf{Policy
+substrate.} AGT supports YAML, OPA/Rego, and Cedar policy languages
+interpreted at runtime by the gate; VCD compiles a policy through an SMT
+prover (Z3) and produces a \texttt{policy\_proof\_hash} that certifies
+the policy holds over every string the schema admits, before any token
+referencing it is minted (§3.1, §6.2.1). AGT does not currently document
+a third-party Policy Decision Point plug-in contract; this paper's
+reference implementation ships an Agent Framework middleware
+(\texttt{docs/proposals/agent-framework-middleware.md}) that composes
+alongside AGT in production deployments rather than displacing it. We
+take the strategic position that AGT and VCD are complements: AGT
+supplies a rich in-process default policy engine; VCD supplies the
+formally-verified policy decisions and offline-verifiable audit
+artefacts that high-assurance verticals require.
+
+\subsubsection{7.3 SMT for Security
+Policy}\label{smt-for-security-policy}
+
+The use of SMT solvers for security-policy reasoning has substantial
+prior art. Margrave {[}@fisler2005margrave{]} used decision procedures
+for XACML access-control reasoning; subsequent work scaled the approach
+to AWS IAM policies via Backes et al.'s Zelkova system
+{[}backes2018semantic{]}, which encodes IAM access policies as SMT and
+proves containment and reachability properties. We borrow the conceptual
+move from this line of work --- encode the policy as a violation
+predicate and ask the solver to refute it --- and apply it to the
+specific case of JSON Schema-bounded tool-call grammars in LLM agent
+settings.
+
+\subsubsection{7.4 Software Supply-Chain
+Attestation}\label{software-supply-chain-attestation}
+
+The framing of ``every artefact content-addressed, every link signed''
+derives from the software supply-chain attestation literature. Sigstore
+{[}@newman2022sigstore{]} and SLSA articulate this design pattern for
+build provenance; in-toto {[}@torres2019intoto{]} extends to multi-step
+pipelines; TUF {[}@samuel2010survivable{]} establishes the underlying
+compromise-resilience properties. VCD applies the same architectural
+pattern --- content addresses, signed transitions, pinned roots --- to a
+different domain (agent tool-call policy) and a different shape of
+artefact (capability tokens rather than build attestations).
+
+\subsubsection{7.5 Capability Receipts as an Audit
+Primitive}\label{capability-receipts-as-an-audit-primitive}
+
+The remaining adjacencies --- Microsoft's Prompt Shields, AWS Bedrock
+policy controls for agents, Google's Model Armor, Lakera Guard / Cisco
+AI Defense, Pillar Security, Anthropic's constitutional classifiers ---
+operate at the \emph{defensive} layer: they reduce attack-success rates
+statistically. None produces a portable artefact tied to a verified
+policy. None offers an audit log a third party can independently verify.
+The question we pose, and answer affirmatively, is: \emph{what would it
+take to give a regulator, an internal audit team, or a downstream tool
+implementation a cryptographic record of agent activity that they could
+verify without trusting the agent's operator?}
+
+VCD's capability receipt is that record. A receipt has the form
+
+\texttt{receipt\ =\ (issuer\_cert,\ schema\_hash,\ policy\_proof\_hash,\ lean\_theorem\_id,\ attenuation\_chain,\ call\_args\_hash,\ decision,\ timestamp)}
+
+signed under the issuer's Ed25519 key (Figure 4). Every field is
+content-addressed: \texttt{schema\_hash} is the SHA-256 of the canonical
+JSON Schema the prover ran against; \texttt{policy\_proof\_hash} is the
+hash of the Z3 proof artefact (or counterexample);
+\texttt{lean\_theorem\_id} names the mechanised soundness theorem in
+\texttt{paper/lean/}; \texttt{attenuation\_chain} lists every parent
+token's id, ensuring the receipt's authority chains to a pinned root;
+\texttt{call\_args\_hash} is the SHA-256 of the canonical-serialised
+tool-call arguments the gate inspected. A verifier holding only the
+issuer's public key and an offline copy of the published Lean
+development can independently confirm five properties: the signature is
+valid under the pinned key; the schema hash matches the published
+registry entry; the policy proof hash matches the published proof
+artefact; the cited Lean theorem closes (rebuild the development
+locally); the call argument hash satisfies the cited policy's
+constraints. None of those checks requires contacting the issuer.
+
+The artefact is the durable contribution. Spotlighting and StruQ make
+the agent harder to fool; AWS Bedrock policy controls make the agent's
+actions cheaper to inspect; CaMeL makes the agent's reasoning
+structurally compartmented. \textbf{VCD is the only published system
+whose output is a verifiable record of agent authority.} Three concrete
+uses motivate the framing:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\item
+  \textbf{Cross-organisation audit (Figure 5).} A bank's FCA examiner
+  reviews three months of receipts emitted by the bank's AI
+  customer-service agent. The bank has published, signed and
+  out-of-band, four artefacts: its issuer public key, its policy
+  registry (each policy hashed and signed), its schema registry, and the
+  URL of its Lean development. The examiner requests the receipt log
+  from the bank (which need not be confidential --- every receipt is
+  independently verifiable). For each receipt the examiner runs five
+  offline checks: signature against the published key;
+  \texttt{schema\_hash} against the registry;
+  \texttt{policy\_proof\_hash} against the registry; rebuild the Lean
+  development and confirm the cited theorem closes; check that
+  \texttt{call\_args\_hash} satisfies the policy's constraint set. The
+  audit's conclusion is a deterministic function of the published
+  artefacts. \textbf{No on-premise inspection of the bank's AI
+  infrastructure is required; no shared secret with the bank's vendor is
+  involved; no information asymmetry between bank and regulator
+  remains.}
+\item
+  \textbf{Tool-side independent enforcement.} A payments-network
+  operator receives a \texttt{transfer\_funds} call from a third-party
+  agent platform. Before executing, the operator's gate verifies the
+  capability receipt: was this call authorised by a token signed by a
+  pinned issuer the operator recognises? Does the cited schema match the
+  operator's published function declaration? Does the cited policy proof
+  actually constrain the call args the operator received? The operator
+  depends on no other piece of the agent platform.
+\item
+  \textbf{Inter-platform delegation.} A travel-booking agent at one
+  organisation delegates to a payment-processing agent at another. The
+  travel agent attenuates its capability token to a tighter child for
+  the payment agent. The payment agent's gate, holding only the travel
+  organisation's published issuer key, verifies the child token's
+  attenuation chain back to a recognised root. Authority crosses an
+  organisational boundary without an out-of-band trust agreement.
+\end{enumerate}
+
+These three uses are presented as worked examples rather than measured
+deployments. The relevant claim is that the artefact is a structural fit
+for an audit pattern the existing prompt-injection-defence literature
+does not address, and that the absence of such an artefact in adjacent
+commercial products (Prompt Shields, Bedrock policy controls, Lakera
+Guard) is not an oversight but a property of the design space: a
+statistical classifier cannot produce a verifiable receipt because there
+is no verifiable claim to cite. A structurally-enforced gate composed
+with a content-addressed signing chain can.

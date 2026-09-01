@@ -1,6 +1,6 @@
 # The Attacks You Can't See — Multimodal Prompt Injection in 2026
 
-*Published 14 May 2026 · Raucle Engineering · Release: [raucle v0.7.0](https://github.com/craigamcw/raucle/releases/tag/v0.7.0)*
+*Published 14 May 2026 · Raucle Engineering · Release: [raucle v0.7.0](https://github.com/epic28-ltd/raucle/releases/tag/v0.7.0)*
 
 ---
 
@@ -164,6 +164,6 @@ We will be writing about that in due course.
 
 ---
 
-*Discussion: [Hacker News](https://news.ycombinator.com/submit) · [Lobste.rs](https://lobste.rs/) · [/r/MachineLearning](https://reddit.com/r/MachineLearning) · [GitHub Issues](https://github.com/craigamcw/raucle/issues?q=label%3Amultimodal)*
+*Discussion: [Hacker News](https://news.ycombinator.com/submit) · [Lobste.rs](https://lobste.rs/) · [/r/MachineLearning](https://reddit.com/r/MachineLearning) · [GitHub Issues](https://github.com/epic28-ltd/raucle/issues?q=label%3Amultimodal)*
 
 *Raucle is an open-source AI security project. The runtime detection engine, the provenance receipt format, the input store, the multimodal scanner, and all reference implementations are MIT-licensed.*

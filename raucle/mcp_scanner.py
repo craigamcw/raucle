@@ -462,7 +462,7 @@ def findings_to_sarif(findings: list[Finding], tool_version: str = "0.4.0") -> d
                     "driver": {
                         "name": "raucle",
                         "version": tool_version,
-                        "informationUri": "https://github.com/craigamcw/raucle",
+                        "informationUri": "https://github.com/epic28-ltd/raucle",
                         "rules": list(rules_by_id.values()),
                     }
                 },

@@ -11,7 +11,7 @@
     <Version>0.1.0</Version>
     <Description>C# reference implementation of the Raucle Provenance Receipt v1 spec (https://raucle.com/spec/provenance/v1)</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/craigamcw/raucle</RepositoryUrl>
+    <RepositoryUrl>https://github.com/epic28-ltd/raucle</RepositoryUrl>
     <PackageProjectUrl>https://raucle.com/spec/provenance/v1</PackageProjectUrl>
     <PackageTags>ai-security;provenance;ed25519;jws;audit</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

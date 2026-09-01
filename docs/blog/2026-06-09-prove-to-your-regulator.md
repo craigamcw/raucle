@@ -1,6 +1,6 @@
 # How to Prove to Your Regulator What Your Agent Did — Without Trusting Your Cloud Provider
 
-*Published 9 June 2026 · Raucle Engineering · Release: [raucle v0.19.0](https://github.com/craigamcw/raucle)*
+*Published 9 June 2026 · Raucle Engineering · Release: [raucle v0.19.0](https://github.com/epic28-ltd/raucle)*
 
 ---
 
@@ -94,4 +94,4 @@ If you are the person who will eventually sit across from that examiner, clone i
 
 ---
 
-*raucle is [open source on GitHub](https://github.com/craigamcw/raucle). Building AI agent security to the standard regulated industries already demand — formal, mechanised, provable.*
+*raucle is [open source on GitHub](https://github.com/epic28-ltd/raucle). Building AI agent security to the standard regulated industries already demand — formal, mechanised, provable.*

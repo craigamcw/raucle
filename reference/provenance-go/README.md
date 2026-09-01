@@ -13,7 +13,7 @@ others.
 ```go
 import (
     "crypto/ed25519"
-    prov "github.com/craigamcw/raucle/reference/provenance-go"
+    prov "github.com/epic28-ltd/raucle/reference/provenance-go"
 )
 
 pub, priv, _ := ed25519.GenerateKey(nil)

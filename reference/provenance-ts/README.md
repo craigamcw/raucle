@@ -4,7 +4,7 @@ A faithful, zero-dependency TypeScript implementation of the
 [Raucle Provenance Receipt v1 spec](https://raucle.com/spec/provenance/v1).
 
 This is one of the cross-language reference implementations (alongside
-the Python implementation in [`raucle`](https://github.com/craigamcw/raucle)).
+the Python implementation in [`raucle`](https://github.com/epic28-ltd/raucle)).
 It emits and verifies the same wire format and computes the same
 content-addressed identifiers — a receipt emitted by the Python
 library verifies here, and vice versa.

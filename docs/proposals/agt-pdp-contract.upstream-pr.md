@@ -185,11 +185,11 @@ Fully additive:
 
 ## Reference implementation / future consumer
 
-raucle ([github.com/craigamcw/raucle](https://github.com/craigamcw/raucle))
+raucle ([github.com/epic28-ltd/raucle](https://github.com/epic28-ltd/raucle))
 is a Verified Capability Discipline implementation — Z3-verified policy
 gates with Ed25519-signed capability tokens and a Lean 4 soundness
 theorem development. Its AGT integration
-([`raucle/integrations/agt.py`](https://github.com/craigamcw/raucle/blob/main/raucle/integrations/agt.py))
+([`raucle/integrations/agt.py`](https://github.com/epic28-ltd/raucle/blob/main/raucle/integrations/agt.py))
 will be reworked to implement `ExternalPolicyBackend` directly once
 this PR lands, populating both new fields. Linked here as evidence
 that the contract change is implementable and that at least one

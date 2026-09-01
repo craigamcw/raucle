@@ -1,2 +1,234 @@
-% Placeholder. Run paper/build-tex.sh to regenerate from DRAFT.md.
-\input{../sections/placeholder-notice}
+VCD has three components, each designed to be useful independently but
+engineered to compose. We describe them in the order they appear in a
+single end-to-end invocation: schema verification, capability minting,
+and gate enforcement (Figure 6).
+
+\subsubsection{3.1 SMT-Backed Policy
+Verification}\label{smt-backed-policy-verification}
+
+Given a tool with JSON Schema \(S\) and a security policy \(P\), we ask:
+does every JSON object satisfying \(S\) also satisfy \(P\)? If yes, the
+policy is \emph{complete} over the schema; if no, there exists a
+concrete counterexample tool call.
+
+We support a fragment of JSON Schema that has decidable semantics under
+the combined theory of strings, integers, and booleans in Z3
+{[}@demoura2008z3{]}: top-level objects with primitive properties
+(\texttt{string}, \texttt{number}, \texttt{integer}, \texttt{boolean}),
+the \texttt{enum} keyword on string-valued properties,
+\texttt{minimum}/\texttt{maximum} constraints on numeric properties, and
+the \texttt{required} array. Constructs outside this fragment ---
+recursive references, \texttt{oneOf}/\texttt{anyOf} schemas, arbitrary
+regex constraints on string fields, unbounded arrays --- cause the
+prover to raise \texttt{UnsupportedGrammar} rather than silently
+approximate. Section 8 sketches the extensions needed to widen the
+fragment.
+
+We support a corresponding fragment of policy language. A policy is a
+mapping from constraint kinds to per-field values:
+\texttt{forbidden\_values:\ \{field\ →\ {[}v\_1,\ ...,\ v\_n{]}\}} and
+\texttt{allowed\_values:\ \{field\ →\ {[}v\_1,\ ...,\ v\_n{]}\}} for
+set-valued constraints on string fields; \texttt{max\_value} and
+\texttt{min\_value} for numeric bounds;
+\texttt{required\_present:\ {[}field,\ ...{]}} for additional presence
+requirements beyond the schema's \texttt{required}; and
+\texttt{forbidden\_field\_combinations:\ {[}{[}f\_1,\ f\_2{]},\ ...{]}}
+for forbidden co-occurrences.
+
+The encoding into Z3 is direct. Each schema property becomes an SMT
+variable of matching sort. Each property's presence is a Boolean.
+Schema-level constraints (enum membership, numeric bounds, required
+presence) are conjuncted as preconditions. The policy is encoded as a
+\emph{violation} disjunction: a single Z3 query asks whether there
+exists an assignment satisfying the schema preconditions and at least
+one violation. If \texttt{unsat}, the policy is proven complete. If
+\texttt{sat}, Z3 produces a model from which we extract a concrete
+counterexample call.
+
+The prover emits a \texttt{ProofResult} containing canonical-JSON hashes
+of the schema and policy, the proof status (\texttt{PROVEN},
+\texttt{REFUTED}, or \texttt{UNDECIDED}), and any counterexample. The
+proof result is itself hashed to produce a content-addressed
+\texttt{proof\_hash} that capability tokens can cite.
+
+\subsubsection{3.2 Capability Tokens}\label{capability-tokens}
+
+A capability token \(t\) is an Ed25519-signed structure binding
+\texttt{(agent\_id,\ tool,\ constraints,\ issued\_at,\ not\_before,\ expires\_at,\ parent\_id,\ policy\_proof\_hash,\ issuer,\ key\_id)}.
+The signature covers a canonical-JSON serialisation of the bound fields.
+The token's identifier is the SHA-256 of the same canonical body,
+prefixed with \texttt{cap:}; the identifier is therefore
+content-addressed and unforgeable absent collision.
+
+The constraint schema mirrors the policy schema accepted by the prover,
+by deliberate design: a token can cite the proof's hash and the gate can
+statically verify that the token's constraints are at least as tight as
+the proven policy.
+
+\textbf{Attenuation.} Given a parent token \(p\) held by an authorised
+principal, the issuer's \texttt{attenuate} primitive derives a child
+token \(c\) with: (a) the same \texttt{tool} as \(p\); (b) an
+\texttt{agent\_id} equal to or a prefix-extension of \(p\)'s; (c)
+constraints that are \emph{narrower} along every dimension; (d) an
+\texttt{expires\_at} no later than \(p\)'s; (e) \texttt{parent\_id} set
+to \(p\)'s identifier. Narrowing is defined per constraint kind:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 2\tabcolsep) * \real{0.5000}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 2\tabcolsep) * \real{0.5000}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Kind
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Narrowing operation
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\texttt{forbidden\_values{[}f{]}} & union:
+\(c.\text{forbidden}_f \supseteq p.\text{forbidden}_f\) \\
+\texttt{allowed\_values{[}f{]}} & intersection:
+\(c.\text{allowed}_f \subseteq p.\text{allowed}_f\) \\
+\texttt{max\_value{[}f{]}} & minimum:
+\(c.\text{max}_f \le p.\text{max}_f\) \\
+\texttt{min\_value{[}f{]}} & maximum:
+\(c.\text{min}_f \ge p.\text{min}_f\) \\
+\texttt{required\_present} & superset:
+\(c.\text{required} \supseteq p.\text{required}\) \\
+\texttt{forbidden\_field\_combinations} & superset:
+\(c.\text{forbidden\_combos} \supseteq p.\text{forbidden\_combos}\) \\
+\end{longtable}
+
+Asking \texttt{attenuate} for a constraint that would broaden
+permissions silently retains the parent's tighter bound; asking for a
+child lifetime that would outlive the parent raises an exception. Both
+behaviours are mechanically enforced (Section 4).
+
+The attenuation discipline is borrowed directly from the
+object-capability literature {[}@miller2006robust{]} and from Macaroons
+{[}@birgisson2014macaroons{]}, from which it differs primarily in the
+cryptographic substrate (Ed25519 signatures rather than chained HMACs)
+and the content-addressed identifier (preventing token-ID reassignment
+attacks that bedevil bearer-token systems).
+
+\subsubsection{3.3 The Gate}\label{the-gate}
+
+The gate is the only path from agent intent to tool execution. It runs
+out-of-process from both the model and the tool implementation, accepts
+a \texttt{(token,\ tool,\ args)} triple, and returns a
+\texttt{GateDecision} of \texttt{ALLOW} or \texttt{DENY} with a
+structured reason. The gate performs eight checks in order, failing
+closed on any one of them:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{Issuer pinning.} The token's \texttt{key\_id} must appear in
+  the gate's trusted-issuer map; otherwise DENY.
+\item
+  \textbf{Signature verification.} Verify the Ed25519 signature against
+  the canonical body using the pinned public key.
+\item
+  \textbf{Identifier binding.} Recompute \texttt{cap:} + SHA-256 of the
+  canonical body and compare to the token's \texttt{token\_id}; reject
+  on mismatch. This blocks an attack where an adversary substitutes a
+  valid signature against a different body.
+\item
+  \textbf{Time bounds.} Reject if \texttt{now\ \textless{}\ not\_before}
+  or \texttt{now\ ≥\ expires\_at}.
+\item
+  \textbf{Tool match.} Reject if
+  \texttt{token.tool\ ≠\ requested\_tool}.
+\item
+  \textbf{Agent scope.} Reject if the caller's claimed
+  \texttt{agent\_id} is neither equal to the token's \texttt{agent\_id}
+  nor a prefix-extension of it.
+\item
+  \textbf{Constraint satisfaction.} For each constraint kind in the
+  token, evaluate the constraint against the supplied \texttt{args}.
+  Reject on any violation.
+\item
+  \textbf{Chain resolution (optional).} If the token carries a
+  \texttt{parent\_id}, walk the parent chain. Every intermediate token
+  must verify under the gate's trusted-issuer map. Reject on any
+  unresolved or invalid parent.
+\end{enumerate}
+
+The gate is a deterministic, side-effect-free decision procedure. Every
+invocation emits a structured event suitable for consumption by an
+append-only audit log; the gate does not itself maintain state.
+
+\textbf{Gate-monopoly is an architectural assumption, not a mathematical
+theorem.} Theorem 2 (§4) establishes that any call returning ALLOW from
+the gate satisfies the in-force constraints; it does \emph{not}
+establish that every tool invocation must go through the gate. That
+latter property is the deployer's responsibility and is enforced
+architecturally: tool implementations live in a separate process from
+the agent runtime, exposed only behind a gate-mediated RPC interface,
+with no eval/exec/direct-import paths reachable from agent-controlled
+data. The reference implementation ships the gate as an out-of-process
+server behind a Unix socket or local HTTPS endpoint, with the issuer key
+in an HSM. A deployment that violates this discipline --- for example,
+by linking the agent runtime and the tool implementation into one
+address space and letting the agent reach the tool symbol directly ---
+loses the property regardless of the gate's correctness. We call this
+property out explicitly because §4's mechanisation provides no formal
+guarantee about it.
+
+\subsubsection{3.4 Composition}\label{composition}
+
+The three primitives compose as follows. A platform operator authors a
+tool schema and a policy, runs the SMT prover, and on \texttt{PROVEN}
+obtains a \texttt{proof\_hash}. The operator mints a root capability
+token citing the proof hash, signing with their issuer key. Tokens are
+distributed to authorised agent contexts, possibly via attenuation
+through orchestration layers. At tool-call time, the agent presents its
+current token to the gate; the gate enforces. Every gate decision is
+recorded into a hash-chained audit log signed by a separate operational
+key, providing tamper-evident attribution that is independently
+verifiable offline.
+
+The four hashes --- schema, policy, proof, audit-leaf --- and three
+signatures --- issuer (on the token), audit (on the chain checkpoint),
+gate-decision (optional, on the structured event) --- close the trust
+graph. Every link is content-addressed; every link is verifiable by any
+party in possession of the corresponding public key. Figure 1 sketches
+the resulting graph.
+
+\begin{verbatim}
+                  ┌─────────────────┐
+                  │  JSON Schema S  │── sha256 ──► grammar_hash
+                  └─────────────────┘                   │
+                                                        ▼
+                  ┌─────────────────┐           ┌──────────────┐
+                  │   Policy P      │── sha256 ─►│ proof_hash   │ (PROVEN/REFUTED)
+                  └─────────────────┘           └──────────────┘
+                                                        │
+                                            cited by    │
+                                                        ▼
+            ┌──────────────────────────────────────────────────┐
+            │  Capability Token   (Ed25519, content-addressed) │
+            │  (agent, tool, constraints, nbf, exp,            │
+            │   policy_proof_hash, parent_id)                  │
+            └──────────────────────────────────────────────────┘
+                                │                       │
+                       attenuate│                       │ presented at call site
+                                ▼                       ▼
+                       ┌────────────────┐    ┌────────────────────┐
+                       │  Child Token   │    │  Gate.check(...)   │
+                       │  parent_id=…   │    │  ALLOW or DENY     │
+                       └────────────────┘    └────────────────────┘
+                                                        │
+                                              audit event
+                                                        ▼
+                                            ┌──────────────────────┐
+                                            │  Hash-chained log    │
+                                            │  Merkle root, signed │
+                                            └──────────────────────┘
+
+Figure 1: The trust graph. Every solid arrow is a content-addressed
+reference; every signed artefact is verifiable offline against a pinned
+issuer or audit key.
+\end{verbatim}

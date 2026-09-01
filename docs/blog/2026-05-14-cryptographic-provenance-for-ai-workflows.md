@@ -95,10 +95,10 @@ A spec without implementations is a wish. Today, alongside the spec, we are publ
 
 | Language | Repo | Dependencies |
 |---|---|---|
-| **Python** | [craigamcw/raucle](https://github.com/craigamcw/raucle) | one — `cryptography` |
-| **TypeScript** | [craigamcw/raucle-receipt-ts](https://github.com/craigamcw/raucle-receipt-ts) | **zero** — Node's `node:crypto` |
-| **Go** | [craigamcw/raucle-receipt-go](https://github.com/craigamcw/raucle-receipt-go) | **zero** — stdlib only |
-| **Rust** | [craigamcw/raucle-receipt-rs](https://github.com/craigamcw/raucle-receipt-rs) | RustCrypto primitives only |
+| **Python** | [epic28-ltd/raucle](https://github.com/epic28-ltd/raucle) | one — `cryptography` |
+| **TypeScript** | [epic28-ltd/raucle-receipt-ts](https://github.com/epic28-ltd/raucle-receipt-ts) | **zero** — Node's `node:crypto` |
+| **Go** | [epic28-ltd/raucle-receipt-go](https://github.com/epic28-ltd/raucle-receipt-go) | **zero** — stdlib only |
+| **Rust** | [epic28-ltd/raucle-receipt-rs](https://github.com/epic28-ltd/raucle-receipt-rs) | RustCrypto primitives only |
 
 All four ship the same JSON test-vector file in their CI. Every implementation must reproduce every published vector byte-for-byte — both the JWS string and the SHA-256 of that string — and every implementation must successfully verify every published signature. If any implementation drifts from the spec, CI fails on the next push.
 
@@ -132,7 +132,7 @@ Three things, in increasing order of commitment.
 
 **Read the spec.** [raucle.com/spec/provenance/v1](https://raucle.com/spec/provenance/v1) is short — about 500 lines of normative Markdown — and the test vectors are five entries you can re-derive yourself if you want to satisfy the cryptographer in you.
 
-**Try one of the implementations.** `pip install raucle`, `npm install @raucle/receipt`, `go get github.com/craigamcw/raucle-receipt-go`, or `cargo add raucle-receipt`. The "hello, world" is twenty lines. The audit chain it produces is real, signed, and verifiable.
+**Try one of the implementations.** `pip install raucle`, `npm install @raucle/receipt`, `go get github.com/epic28-ltd/raucle-receipt-go`, or `cargo add raucle-receipt`. The "hello, world" is twenty lines. The audit chain it produces is real, signed, and verifiable.
 
 **File an issue on the spec.** We would much rather hear "this is wrong because…" today than ship v1 final and have to publish v2 next year. Issues tagged `spec` get a 14-day public-comment treatment before any change merges.
 
@@ -142,6 +142,6 @@ Verifiable AI is not going to arrive because vendors get more honest. It is goin
 
 ---
 
-*Discussion: [Hacker News](#) · [Lobste.rs](#) · [/r/MachineLearning](#) · [OWASP AI Exchange](#) · [GitHub Issues](https://github.com/craigamcw/raucle/issues?q=label%3Aspec)*
+*Discussion: [Hacker News](#) · [Lobste.rs](#) · [/r/MachineLearning](#) · [OWASP AI Exchange](#) · [GitHub Issues](https://github.com/epic28-ltd/raucle/issues?q=label%3Aspec)*
 
 *Raucle is an open-source AI security project. The runtime detection engine, the provenance receipt format, and all four reference implementations are MIT-licensed.*

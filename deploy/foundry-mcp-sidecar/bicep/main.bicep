@@ -39,7 +39,7 @@ param auditStorageAccountId string
 param auditContainerName string = 'raucle-audit'
 
 @description('raucle container image. Defaults to the latest GA tag on GHCR.')
-param raucleImage string = 'ghcr.io/craigamcw/raucle:v0.12.0'
+param raucleImage string = 'ghcr.io/epic28-ltd/raucle:v0.12.0'
 
 @description('Issuer string (e.g. "acme.bank.kyc-platform"). Embedded in every emitted receipt.')
 param issuerId string

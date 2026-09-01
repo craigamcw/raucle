@@ -171,7 +171,7 @@ The mechanisation depends on three explicit cryptographic-oracle assumptions, al
 
 ## 5. Implementation
 
-The reference implementation is an open-source library cited as `[anonymised for blind review]`. Approximately 5,000 lines of Python implement the runtime (the SMT prover, capability issuance and the gate, provenance receipts and chain verification, the modelled-language registry described below, and the audit chain); an additional ~430 lines of Lean 4 contain the formal development. The implementation depends on Z3 (Python bindings) and the audited `cryptography` library for Ed25519. No new cryptographic primitives are introduced.
+The reference implementation is an open-source library cited as `[anonymised for blind review]`. Approximately 12,000 lines of Python implement the runtime (the SMT prover, capability issuance and the gate, provenance receipts and chain verification, the modelled-language registry described below, the audit chain, the policy-DSL gateway, remote-key signing, and the conformance re-verification layer described below); an additional ~430 lines of Lean 4 contain the formal development. The implementation depends on Z3 (Python bindings) and the audited `cryptography` library for Ed25519. No new cryptographic primitives are introduced.
 
 Several engineering decisions warrant comment.
 
@@ -184,6 +184,10 @@ Several engineering decisions warrant comment.
 **Out-of-process gate.** Although the gate can run as a Python library function in the same address space as the agent runtime, the recommended deployment runs it as a separate process behind a Unix socket or local HTTPS endpoint, with the issuer key held by an HSM. This separation provides defence-in-depth: an LLM-driven RCE in the agent runtime cannot directly mint or modify tokens.
 
 **Content-addressed everything.** Tokens, proof artifacts, audit-chain leaves, and feed entries (where used in a larger deployment) are all content-addressed, allowing cross-reference by hash without needing a central registry.
+
+**Conformance re-verification with selective disclosure.** The gate records `args_hash = SHA-256(canonical(args))` in each receipt, so a third-party verifier can confirm signatures, cited schema and proof hashes, and chain integrity offline — but cannot confirm that *this specific call's arguments* satisfied the policy without the operator disclosing raw arguments. The conformance re-verification layer closes this gap for auditable subsets. Call arguments are committed as a Merkle tree over their top-level fields; leaves hash the field name and the JCS-canonical encoding of the value; ordering follows UTF-16 code-unit order, matching the canonicalisation discipline proven cross-language for receipt bodies. The operator discloses only constraint-relevant fields (with Merkle paths); the verifier recomputes and re-derives per-constraint SATISFIED / VIOLATED / UNKNOWN verdicts independently of the operator's runtime, failing closed on any undisclosed field. All hashing is SHA-256, chosen deliberately because it is the well-trodden path in zk proof systems: the scheme ports to a zkVM (Layer 2) without exotic primitives.
+
+**Remote-key signing.** In production the issuer key need not live in a local HSM: the signer abstraction routes Ed25519 operations to AWS KMS, Azure Key Vault, or HashiCorp Vault Transit, so the key material never leaves the remote service. The token, proof, and audit artefacts are unchanged; only the signing substrate differs. The gate is agnostic to which signer minted a token, provided its `key_id` is in the trusted-issuer map.
 
 The codebase is released under a permissive open-source licence (Apache-2.0); the Lean development will be released alongside camera-ready acceptance.
 
@@ -546,7 +550,9 @@ We list limitations honestly. Several are direct consequences of the threat mode
 
 **Parameter-space side channels.** Discussed in Section 6.5. The mitigation is schema tightening — replacing unbounded numeric fields with bounded enums where the application semantics permit. A combinatorial analysis of side-channel capacity per schema would be a useful addendum.
 
-**Confused-deputy attacks.** Multi-call attacks where each individual call is policy-compliant but the sequence violates an end-to-end property require provenance and dataflow analysis beyond the per-call gate. Our companion provenance layer addresses this; integrating it with VCD is in progress.
+**Confused-deputy attacks.** Multi-call attacks where each individual call is policy-compliant but the sequence violates an end-to-end property require provenance and dataflow analysis beyond the per-call gate. Our companion provenance layer addresses this; the integration ships in the reference implementation (the gateway routes every call through the gate and receipts the outcome).
+
+**Argument privacy in re-verification.** The selective-disclosure layer (§5) lets a verifier confirm constraint conformance from a chosen subset of fields, but a constraint touching an undisclosed field remains UNKNOWN, and converting every UNKNOWN to SATISFIED requires a zkVM or SNARK proof of the gate check over the hidden arguments. The commitment scheme is designed for exactly this port (SHA-256 leaves, domain-separated hashing, no exotic primitives); Layer 2 is future work.
 
 **Bootstrap and key management.** VCD reduces the trust problem from "the model must be robust to all prompt injection" to "the issuer's private key must be uncompromised". This is a substantial improvement but not zero. Standard HSM and key-rotation practices apply; the threat model treats compromise of the issuer's key as out of scope.
 
@@ -608,3 +614,5 @@ Most `[TBD]` markers from the 2026-05-14 draft have been resolved over the 2026-
 5. **Final pass for figure references and citation keys.** Bracket-style placeholders in the bibliography need replacing with the venue's chosen citation style.
 
 The empirical evidence base — three generations of one open-weight family on banking × six defences (complete), **three** generations on three cross-suites × {none, vcd_full} (19 of 21 cells; the two omitted cells crashed in an AgentDojo slack-suite utility-scorer bug), **three** generations on three attack families × {none, shields, vcd_full} (with full defence sweep on v4-flash), two additional providers (Qwen3.5, Kimi-k2.6) on banking × {none, shields, vcd_full}, 8,073 logged gate decisions, 720 LLM-driven banking attack attempts at 100% gate-block rate outside one benchmark coincidence cell, and full ablation across the two VCD components — is settled.
+
+**2026-09-01 addendum.** Since the empirical freeze, the reference implementation gained three engineering components described in §5: the policy-DSL gateway (network enforcement point with per-agent/per-source/per-destination rules), remote-key signing (AWS KMS / Azure Key Vault / HashiCorp Vault Transit), and the conformance re-verification layer (field-level Merkle commitments with selective disclosure). None of these affects the measured claims: the gate, token, and proof semantics are unchanged, and §6's numbers were produced against the frozen pre-registration hashes. The gateway and conformance layers are engineering contributions reported for completeness; the paper's evaluation claims remain scoped to the gate + receipt core that the empirical freeze covered.

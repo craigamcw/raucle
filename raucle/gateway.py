@@ -563,6 +563,19 @@ class RaucleGateway:
             except Exception:
                 logger.exception("Failed to mint token for %s", rule.tool)
 
+    def _mint_for_rule(self, rule: Any) -> Any:
+        """Mint a fresh capability token for *rule*.
+
+        Used for first-use and for re-minting when the cached token has
+        expired: policy TTLs are short by design (120-3600s), and a
+        long-running gateway must keep authorising conforming calls after
+        the startup token's TTL has elapsed. The re-mint is signed by the
+        same issuer key, under the same policy constraints, so the
+        security posture is unchanged: expiry bounds each token's window,
+        not the deployment's lifetime.
+        """
+        return self._issuer.mint(**rule.to_mint_kwargs())
+
     def _load_policies(self) -> None:
         """Load policies from a file or directory of YAML files.
 
@@ -679,6 +692,17 @@ class RaucleGateway:
 
         token = self._tokens[tool]
         actual_agent_id = agent_id or matched_rule.agent_id
+        now_ts = time.time()
+        if token.expires_at <= now_ts:
+            # Token TTL elapsed; re-mint under the matched rule (same issuer
+            # key, same constraints) so short policy TTLs do not brick a
+            # long-running gateway. Fail-closed if re-minting fails.
+            try:
+                token = self._mint_for_rule(matched_rule)
+                self._tokens[tool] = token
+            except Exception:
+                logger.exception("Re-mint failed for %s", tool)
+                return self._deny_result(result, "token expired and re-mint failed", start)
         result["policy"] = Path(matched_rule.source_file).name if matched_rule.source_file else tool
 
         decision = self._gate.check(
